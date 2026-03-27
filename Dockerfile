@@ -5,7 +5,10 @@ WORKDIR /app
 COPY package.json .
 RUN npm install --production
 
-COPY src/ ./src/
-COPY scripts/ ./scripts/
+COPY index.js migrate.js schema.sql ./
+COPY bot/ ./bot/
+COPY queue/ ./queue/
+COPY agent/ ./agent/
+COPY db/ ./db/
 
-CMD ["node", "src/index.js"]
+CMD ["node", "index.js"]
