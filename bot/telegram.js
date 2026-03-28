@@ -434,10 +434,24 @@ export function createBot() {
       try {
         const result = await conductOnboarding(user.id, ctx.message.text)
 
+        if (result.done) {
+          // Already finalized but not confirmed — show showcase again
+          const freshProfile = await db.getProfile(user.id)
+          if (!freshProfile?.profile_confirmed) {
+            const kb = new InlineKeyboard()
+              .text('✅ Всё верно', `confirm_profile:${user.id}`)
+              .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
+            await ctx.reply(
+              `Вот твоё описание — подтверди чтобы начать поиск:\n\n_${freshProfile?.showcase_public || '—'}_`,
+              { parse_mode: 'Markdown', reply_markup: kb }
+            )
+          }
+          return
+        }
+
         if (result.message) await ctx.reply(result.message)
 
         if (result.finalPhase) {
-          // Show showcase for confirmation before starting matching
           const freshProfile = await db.getProfile(user.id)
           await updateProfileEmbedding(user.id, freshProfile)
           const kb = new InlineKeyboard()
