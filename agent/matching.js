@@ -181,11 +181,12 @@ async function passesHardFilters(profileA, profileB, log = () => {}) {
       max_tokens: 10,
       messages: [{
         role: 'user',
-        content: `Проверь совместимость жёстких фильтров двух профилей.
+        content: `Проверь, есть ли ЯВНОЕ противоречие между жёсткими фильтрами двух профилей.
 ФИЛЬТРЫ A: ${JSON.stringify(filtersA)}
 ФИЛЬТРЫ B: ${JSON.stringify(filtersB)}
 ПРОФИЛЬ A: ${profileA.showcase_public || ''}
 ПРОФИЛЬ B: ${profileB.showcase_public || ''}
+Правило: отвечай "no" ТОЛЬКО если в профиле есть прямое несоответствие фильтру (например, фильтр "не курящий", а в профиле написано "курю"). Если данных недостаточно — отвечай "yes". По умолчанию "yes".
 Ответь ТОЛЬКО "yes" или "no".`
       }]
     })
