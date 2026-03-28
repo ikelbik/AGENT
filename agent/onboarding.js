@@ -251,7 +251,7 @@ PHASE_COMPLETE:{"field1":"value1","field2":"value2"}`
     const summary = buildPhaseSummary(phaseData)
     cleanText = cleanText.trimEnd()
     if (summary) cleanText += '\n\n' + summary
-    if (nextPhaseConfig) cleanText += '\n\n' + nextPhaseConfig.questions[0]
+    if (nextPhaseConfig && phase + 1 <= maxPhase) cleanText += '\n\n' + nextPhaseConfig.questions[0]
   } else if (!hasQuestion) {
     // Mid-phase — find next unasked question
     const asked = history
