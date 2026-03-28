@@ -272,6 +272,11 @@ export function createBot() {
 
       await ctx.api.sendMessage(userA.telegram_id, msgA, { parse_mode: 'HTML' })
       await ctx.api.sendMessage(userB.telegram_id, msgB, { parse_mode: 'HTML' })
+
+      // Помечаем обоих — больше не матчить
+      await db.setMatchingActive(match.user_a_id, false)
+      await db.setMatchingActive(match.user_b_id, false)
+
       await ctx.answerCallbackQuery('🎉 Контакт обменян!')
     } else {
       // Notify the other side they were chosen
