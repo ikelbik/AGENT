@@ -167,27 +167,36 @@ function intimateCompatibilityScore(a, b) {
 
 // ─── Hard filters check via Claude ───────────────────────────────────────────
 
-async function passesHardFilters(profileA, profileB) {
+async function passesHardFilters(profileA, profileB, log = () => {}) {
   const filtersA = profileA.hard_filters
   const filtersB = profileB.hard_filters
   const empty = v => !v || (typeof v === 'object' && Object.keys(v).length === 0)
   if (empty(filtersA) && empty(filtersB)) return true
 
-  const response = await claude.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 10,
-    messages: [{
-      role: 'user',
-      content: `Проверь совместимость жёстких фильтров двух профилей.
+  log(`  hard filters A: ${JSON.stringify(filtersA)} | B: ${JSON.stringify(filtersB)}`)
+
+  try {
+    const response = await claude.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 10,
+      messages: [{
+        role: 'user',
+        content: `Проверь совместимость жёстких фильтров двух профилей.
 ФИЛЬТРЫ A: ${JSON.stringify(filtersA)}
 ФИЛЬТРЫ B: ${JSON.stringify(filtersB)}
 ПРОФИЛЬ A: ${profileA.showcase_public || ''}
 ПРОФИЛЬ B: ${profileB.showcase_public || ''}
 Ответь ТОЛЬКО "yes" или "no".`
-    }]
-  })
+      }]
+    })
 
-  return response.content[0].text.trim().toLowerCase().startsWith('yes')
+    const answer = response.content[0].text.trim().toLowerCase()
+    log(`  hard filters verdict: "${answer}"`)
+    return answer.startsWith('yes')
+  } catch (e) {
+    log(`  hard filters ERROR: ${e.message} — defaulting to pass`)
+    return true
+  }
 }
 
 // ─── Find candidates ──────────────────────────────────────────────────────────
@@ -368,7 +377,7 @@ export async function runMatching(userId) {
       continue
     }
 
-    const passes = await passesHardFilters(profile, candidate)
+    const passes = await passesHardFilters(profile, candidate, log)
     if (!passes) {
       log(`  SKIP — hard filters`)
       continue
