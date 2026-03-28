@@ -50,11 +50,16 @@ export function scoreCompatibility(profileA, profileB) {
     return sum + (dimensions[dim] || 0.5) * weight
   }, 0)
 
-  // For romantic goal — blend in intimate compatibility
+  // For romantic goal — blend in intimate + physical compatibility
   if (goalType === 'romantic') {
     const intimateScore = intimateCompatibilityScore(profileA, profileB)
     if (intimateScore === 0) return { score: 0, dimensions, action: 'skip' }
-    totalScore = totalScore * 0.75 + intimateScore * 0.25
+
+    const physScore = (physicalPreferencesScore(profileA, profileB) +
+                       physicalPreferencesScore(profileB, profileA)) / 2
+    if (physScore === 0) return { score: 0, dimensions, action: 'skip' }
+
+    totalScore = totalScore * 0.65 + intimateScore * 0.20 + physScore * 0.15
   }
 
   return {
@@ -73,27 +78,52 @@ function isGoalCompatible(goalA, goalB) {
   return false
 }
 
-// ─── Orientation compatibility ────────────────────────────────────────────────
+// ─── Gender & orientation compatibility ──────────────────────────────────────
 
 function isOrientationCompatible(a, b) {
+  // Use explicit partner_gender_preference if available (most accurate)
+  const prefA = a.partner_gender_preference
+  const prefB = b.partner_gender_preference
+  const genderA = a.gender
+  const genderB = b.gender
+
+  if (prefA && genderB) {
+    if (!genderB.toLowerCase().includes(prefA.toLowerCase()) &&
+        !prefA.toLowerCase().includes(genderB.toLowerCase()) &&
+        prefA !== 'any' && prefA !== 'любой') return false
+  }
+  if (prefB && genderA) {
+    if (!genderA.toLowerCase().includes(prefB.toLowerCase()) &&
+        !prefB.toLowerCase().includes(genderA.toLowerCase()) &&
+        prefB !== 'any' && prefB !== 'любой') return false
+  }
+
+  // Fallback: orientation-based check
   if (!a.orientation || !b.orientation) return true
-
-  const hetA = a.orientation === 'heterosexual'
-  const hetB = b.orientation === 'heterosexual'
-  const gayA = a.orientation === 'homosexual'
-  const gayB = b.orientation === 'homosexual'
-  const biA  = a.orientation === 'bisexual'
-  const biB  = b.orientation === 'bisexual'
-
-  // Heterosexual needs opposite gender
-  if (hetA && hetB) return a.gender !== b.gender
-  // Both gay needs same gender
-  if (gayA && gayB) return a.gender === b.gender
-  // Bi is compatible with anyone
-  if (biA || biB) return true
-  // Mixed hetero+gay = incompatible
-  if ((hetA && gayB) || (gayA && hetB)) return false
+  if (a.orientation === 'bisexual' || b.orientation === 'bisexual') return true
+  if (a.orientation === 'heterosexual' && b.orientation === 'heterosexual')
+    return !!genderA && !!genderB && genderA !== genderB
+  if (a.orientation === 'homosexual' && b.orientation === 'homosexual')
+    return !!genderA && !!genderB && genderA === genderB
+  if ((a.orientation === 'heterosexual' && b.orientation === 'homosexual') ||
+      (a.orientation === 'homosexual'  && b.orientation === 'heterosexual')) return false
   return true
+}
+
+// ─── Physical preferences score ───────────────────────────────────────────────
+
+function physicalPreferencesScore(a, b) {
+  // a looks at b's physical params against a's preferences
+  let score = 1.0
+  const prefsA = a.physical_preferences || {}
+  const selfB  = b.physical_self || {}
+
+  if (prefsA.age_min && b.age && b.age < prefsA.age_min) score -= 0.4
+  if (prefsA.age_max && b.age && b.age > prefsA.age_max) score -= 0.4
+  if (prefsA.height_min && selfB.height && selfB.height < prefsA.height_min) score -= 0.3
+  if (prefsA.height_max && selfB.height && selfB.height > prefsA.height_max) score -= 0.3
+
+  return Math.max(0, score)
 }
 
 // ─── Relationship format compatibility ───────────────────────────────────────

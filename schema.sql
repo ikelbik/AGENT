@@ -155,5 +155,6 @@ DO $$ BEGIN
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS physical_preferences JSONB DEFAULT '{}';
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_tags TEXT[];
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_dealbreakers TEXT[];
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS partner_gender_preference TEXT;
 EXCEPTION WHEN others THEN NULL;
 END $$;
