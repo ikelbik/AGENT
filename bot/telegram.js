@@ -8,6 +8,9 @@ import 'dotenv/config'
 
 let botInstance = null
 
+// In-memory session for pending actions (single instance)
+const pendingShowcaseEdit = new Set() // userIds awaiting showcase text input
+
 export function createBot() {
   if (botInstance) return botInstance
 
@@ -36,7 +39,7 @@ export function createBot() {
     } else {
       await ctx.reply(
         `С возвращением! Твой профиль готов.\n\n` +
-        `Используй:\n/pings — входящие пинги\n/dialogue — активный диалог\n/profile — твой профиль\n/found — нашёл то что искал`
+        `Используй:\n/pings — входящие пинги\n/dialogue — активный диалог\n/profile — твой профиль\n/found — нашёл то что искал\n/restart — пройти интервью заново`
       )
     }
   })
@@ -244,10 +247,94 @@ export function createBot() {
     await ctx.answerCallbackQuery('Пиши сообщение!')
   })
 
+  // ─── /restart ──────────────────────────────────────────────────────────────
+
+  bot.command('restart', async (ctx) => {
+    const user = await db.getUserByTelegramId(ctx.from.id)
+    if (!user) return ctx.reply('Сначала напиши /start')
+
+    const kb = new InlineKeyboard()
+      .text('✅ Да, начать заново', 'confirm_restart')
+      .text('❌ Отмена', 'cancel_restart')
+
+    await ctx.reply(
+      `⚠️ *Начать заново?*\n\n` +
+      `Весь профиль и история интервью будут удалены. Пинги и диалоги сохранятся.\n\n` +
+      `Ты уверен?`,
+      { parse_mode: 'Markdown', reply_markup: kb }
+    )
+  })
+
+  // ─── Profile confirmation callbacks ────────────────────────────────────────
+
+  bot.callbackQuery(/^confirm_profile:(.+)$/, async (ctx) => {
+    const userId = ctx.match[1]
+    await db.confirmProfile(userId)
+    const user = await db.getUserByTelegramId(ctx.from.id)
+    if (user) await scheduleMatching(user.id)
+
+    await ctx.editMessageText(
+      ctx.msg.text + '\n\n✅ _Подтверждено — запускаю поиск!_',
+      { parse_mode: 'Markdown' }
+    )
+    await ctx.reply(
+      `🔍 Поиск запущен. Если найду подходящих — пришлю пинги.\n\n` +
+      `/pings — входящие пинги\n/profile — твой профиль\n/found — нашёл то что искал`
+    )
+    await ctx.answerCallbackQuery()
+  })
+
+  bot.callbackQuery(/^edit_showcase:(.+)$/, async (ctx) => {
+    const userId = ctx.match[1]
+    pendingShowcaseEdit.add(String(ctx.from.id))
+
+    await ctx.editMessageText(
+      ctx.msg.text + '\n\n✏️ _Жду новый текст..._',
+      { parse_mode: 'Markdown' }
+    )
+    await ctx.reply(
+      `Напиши новое описание (2-3 предложения).\n\n` +
+      `_Это то что другие агенты увидят при подборе — без личных данных и интимных деталей._`,
+      { parse_mode: 'Markdown' }
+    )
+    await ctx.answerCallbackQuery()
+  })
+
+  bot.callbackQuery('confirm_restart', async (ctx) => {
+    const user = await db.getUserByTelegramId(ctx.from.id)
+    if (!user) return ctx.answerCallbackQuery()
+
+    await db.resetProfile(user.id)
+    await ctx.editMessageText('♻️ Профиль сброшен.')
+    await ctx.reply(
+      `👋 Начнём заново!\n\n` +
+      `Итак — что привело тебя сюда?`
+    )
+    await ctx.answerCallbackQuery()
+  })
+
+  bot.callbackQuery('cancel_restart', async (ctx) => {
+    await ctx.editMessageText('Отмена. Профиль сохранён.')
+    await ctx.answerCallbackQuery()
+  })
+
   // ─── Default message handler ───────────────────────────────────────────────
 
   bot.on('message:text', async (ctx) => {
     const user = await db.upsertUser(ctx.from.id, ctx.from.username)
+
+    // Handle pending showcase edit
+    if (pendingShowcaseEdit.has(String(ctx.from.id))) {
+      pendingShowcaseEdit.delete(String(ctx.from.id))
+      await db.confirmProfile(user.id, ctx.message.text)
+      await scheduleMatching(user.id)
+      await ctx.reply(
+        `✅ Описание обновлено:\n\n_${ctx.message.text}_\n\nЗапускаю поиск!`,
+        { parse_mode: 'Markdown' }
+      )
+      return
+    }
+
     const profile = await db.getProfile(user.id)
 
     // Still in onboarding
@@ -258,14 +345,18 @@ export function createBot() {
         await ctx.reply(result.message)
 
         if (result.finalPhase) {
-          // Onboarding complete — start matching automatically
-          await updateProfileEmbedding(user.id, await db.getProfile(user.id))
-          await scheduleMatching(user.id)
+          // Show showcase for confirmation before starting matching
+          const freshProfile = await db.getProfile(user.id)
+          await updateProfileEmbedding(user.id, freshProfile)
+          const kb = new InlineKeyboard()
+            .text('✅ Всё верно', `confirm_profile:${user.id}`)
+            .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
           await ctx.reply(
             `✅ *Профиль готов!*\n\n` +
-            `Запускаю поиск — если найду подходящих людей, пришлю пинги.\n\n` +
-            `Используй:\n/pings — входящие пинги\n/profile — твой профиль\n/found — нашёл то что искал`,
-            { parse_mode: 'Markdown' }
+            `Вот как агент тебя описал — это увидят другие агенты при подборе:\n\n` +
+            `_${freshProfile?.showcase_public || '—'}_\n\n` +
+            `Всё верно?`,
+            { parse_mode: 'Markdown', reply_markup: kb }
           )
         }
       } catch (e) {

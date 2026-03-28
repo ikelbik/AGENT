@@ -144,6 +144,7 @@ CREATE OR REPLACE TRIGGER dialogues_updated_at
 DO $$ BEGIN
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_active BOOLEAN DEFAULT TRUE;
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_stopped_at TIMESTAMPTZ;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS profile_confirmed BOOLEAN DEFAULT FALSE;
   -- Phase 7: private intimate profile
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gender TEXT;
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS age INT;

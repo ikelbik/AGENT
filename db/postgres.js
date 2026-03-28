@@ -126,6 +126,34 @@ export const db = {
     )
   },
 
+  async confirmProfile(userId, showcasePublic = null) {
+    const updates = { profile_confirmed: true, matching_active: true }
+    if (showcasePublic) updates.showcase_public = showcasePublic
+    await pool.query(
+      `UPDATE profiles SET profile_confirmed = TRUE, matching_active = TRUE${showcasePublic ? ', showcase_public = $2' : ''} WHERE user_id = $1`,
+      showcasePublic ? [userId, showcasePublic] : [userId]
+    )
+  },
+
+  async resetProfile(userId) {
+    await pool.query(
+      `UPDATE profiles SET
+        onboarding_phase = 0, onboarding_data = '{}',
+        profile_confirmed = FALSE, matching_active = FALSE,
+        matching_stopped_at = NULL,
+        goal_type = NULL, archetype_tags = NULL, decision_style = NULL,
+        communication_directness = NULL, openness_score = NULL,
+        hard_filters = '{}', style_vector = '{}', detected_needs = '[]',
+        showcase_public = NULL, showcase_tags = NULL, embedding = NULL,
+        gender = NULL, age = NULL, physical_self = '{}', orientation = NULL,
+        relationship_format = NULL, physical_preferences = '{}',
+        intimate_tags = NULL, intimate_dealbreakers = NULL
+       WHERE user_id = $1`,
+      [userId]
+    )
+    await pool.query('DELETE FROM conversations WHERE user_id = $1', [userId])
+  },
+
   async createPing(fromUserId, toUserId, score, hypothesis, pingText) {
     const { rows } = await pool.query(
       `INSERT INTO pings (from_user_id, to_user_id, score, hypothesis, ping_text)
