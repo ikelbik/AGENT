@@ -126,6 +126,13 @@ export const db = {
     )
   },
 
+  async setPendingAction(userId, action) {
+    await pool.query(
+      'UPDATE profiles SET pending_action = $2 WHERE user_id = $1',
+      [userId, action]
+    )
+  },
+
   async confirmProfile(userId, showcasePublic = null) {
     const updates = { profile_confirmed: true, matching_active: true }
     if (showcasePublic) updates.showcase_public = showcasePublic

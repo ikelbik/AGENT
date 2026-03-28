@@ -8,8 +8,6 @@ import 'dotenv/config'
 
 let botInstance = null
 
-// In-memory session for pending actions (single instance)
-const pendingShowcaseEdit = new Set() // userIds awaiting showcase text input
 
 export function createBot() {
   if (botInstance) return botInstance
@@ -79,6 +77,85 @@ export function createBot() {
       { parse_mode: 'Markdown' }
     )
   })
+
+  // ─── /seed (TEST_MODE only) ────────────────────────────────────────────────
+
+  if (process.env.TEST_MODE === 'true') {
+    bot.command('seed', async (ctx) => {
+      const user = await db.upsertUser(ctx.from.id, ctx.from.username)
+      const arg = ctx.match?.trim() || 'romantic'
+      const goalType = ['romantic', 'business', 'mentor'].includes(arg) ? arg : 'romantic'
+
+      const profiles = {
+        romantic: {
+          goal_type: 'romantic',
+          archetype_tags: ['creative', 'introvert', 'deep-thinker'],
+          decision_style: 'intuitive',
+          communication_directness: 0.75,
+          openness_score: 0.8,
+          hard_filters: { geographic_constraints: 'same city' },
+          style_vector: { directness: 0.75, pace: 0.4, structure: 0.3 },
+          showcase_public: 'Думаю больше чем говорю, но когда говорю — по делу. Ищу человека с которым тишина не неловкая.',
+          showcase_tags: ['depth', 'introvert', 'creative'],
+          gender: 'male',
+          age: 28,
+          physical_self: { height: 180, weight: 75, body_type: 'athletic' },
+          orientation: 'heterosexual',
+          relationship_format: 'serious',
+          physical_preferences: { age_range: '24-33', height_min: 160 },
+          intimate_tags: ['monogamy', 'slow-burn'],
+          intimate_dealbreakers: ['open-relationship']
+        },
+        business: {
+          goal_type: 'business',
+          archetype_tags: ['executor', 'analytical', 'systems-thinker'],
+          decision_style: 'analytical',
+          communication_directness: 0.9,
+          openness_score: 0.6,
+          hard_filters: { value_dealbreakers: 'no remote' },
+          style_vector: { directness: 0.9, pace: 0.8, structure: 0.85 },
+          showcase_public: 'Строю процессы и нахожу точки роста там где другие видят хаос. Ищу партнёра который дополняет по навыкам.',
+          showcase_tags: ['executor', 'systems', 'growth'],
+          gender: 'female',
+          age: 32,
+          orientation: null,
+          relationship_format: null
+        },
+        mentor: {
+          goal_type: 'mentor',
+          archetype_tags: ['strategist', 'experienced', 'connector'],
+          decision_style: 'mixed',
+          communication_directness: 0.7,
+          openness_score: 0.85,
+          hard_filters: {},
+          style_vector: { directness: 0.7, pace: 0.5, structure: 0.6 },
+          showcase_public: '15 лет в продукте. Помог запустить 8 команд. Интересует передача опыта тем кто готов его взять.',
+          showcase_tags: ['mentor', 'product', 'strategy'],
+          gender: 'male',
+          age: 42,
+          orientation: null,
+          relationship_format: null
+        }
+      }
+
+      await db.upsertProfile(user.id, {
+        ...profiles[goalType],
+        onboarding_phase: 8,
+        profile_confirmed: true,
+        matching_active: true
+      })
+
+      await scheduleMatching(user.id)
+
+      await ctx.reply(
+        `🧪 *Тестовый профиль создан!*\n\n` +
+        `Тип: *${goalType}*\n` +
+        `Витрина: _${profiles[goalType].showcase_public}_\n\n` +
+        `Поиск запущен. /pings — входящие пинги`,
+        { parse_mode: 'Markdown' }
+      )
+    })
+  }
 
   // ─── /found ────────────────────────────────────────────────────────────────
 
@@ -300,7 +377,7 @@ export function createBot() {
 
   bot.callbackQuery(/^edit_showcase:(.+)$/, async (ctx) => {
     const userId = ctx.match[1]
-    pendingShowcaseEdit.add(String(ctx.from.id))
+    await db.setPendingAction(userId, 'showcase_edit')
 
     await ctx.editMessageText(
       ctx.msg.text + '\n\n✏️ _Жду новый текст..._',
@@ -337,9 +414,10 @@ export function createBot() {
   bot.on('message:text', async (ctx) => {
     const user = await db.upsertUser(ctx.from.id, ctx.from.username)
 
-    // Handle pending showcase edit
-    if (pendingShowcaseEdit.has(String(ctx.from.id))) {
-      pendingShowcaseEdit.delete(String(ctx.from.id))
+    // Handle pending showcase edit (persisted in DB — survives restarts)
+    const profileCheck = await db.getProfile(user.id)
+    if (profileCheck?.pending_action === 'showcase_edit') {
+      await db.setPendingAction(user.id, null)
       await db.confirmProfile(user.id, ctx.message.text)
       await scheduleMatching(user.id)
       await ctx.reply(
