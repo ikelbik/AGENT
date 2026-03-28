@@ -22,23 +22,28 @@ export function createBot() {
   // ─── /start ────────────────────────────────────────────────────────────────
 
   bot.command('start', async (ctx) => {
-    const user = await db.upsertUser(ctx.from.id, ctx.from.username)
-    const profile = await db.getProfile(user.id)
+    try {
+      const user = await db.upsertUser(ctx.from.id, ctx.from.username)
+      const profile = await db.getProfile(user.id)
 
-    if (!profile || profile.onboarding_phase === 0) {
-      await db.upsertProfile(user.id, { onboarding_phase: 0 })
-      await ctx.reply(
-        `👋 Привет! Я AgentNet — сеть агентов для поиска людей и возможностей.\n\n` +
-        `Расскажи о себе и о том кого ищешь — свободно, подробно, своими словами. ` +
-        `Чем больше расскажешь сразу, тем меньше я буду переспрашивать.`
-      )
-    } else if (profile.onboarding_phase < 8) {
-      await ctx.reply(`С возвращением! Продолжим.`)
-    } else {
-      await ctx.reply(
-        `С возвращением! Твой профиль готов.\n\n` +
-        `Используй:\n/pings — входящие пинги\n/dialogue — активный диалог\n/profile — твой профиль\n/found — нашёл то что искал\n/restart — пройти интервью заново`
-      )
+      if (!profile || profile.onboarding_phase === 0) {
+        await db.upsertProfile(user.id, { onboarding_phase: 0 })
+        await ctx.reply(
+          `👋 Привет! Я AgentNet — сеть агентов для поиска людей и возможностей.\n\n` +
+          `Расскажи о себе и о том кого ищешь — свободно, подробно, своими словами. ` +
+          `Чем больше расскажешь сразу, тем меньше я буду переспрашивать.`
+        )
+      } else if (profile.onboarding_phase < 8) {
+        await ctx.reply(`С возвращением! Продолжим — напиши что-нибудь.`)
+      } else {
+        await ctx.reply(
+          `С возвращением! Твой профиль готов.\n\n` +
+          `Используй:\n/matches — найденные матчи\n/profile — твой профиль\n/found — нашёл что искал\n/restart — начать заново`
+        )
+      }
+    } catch (e) {
+      console.error('/start error:', e)
+      await ctx.reply('Ошибка при запуске. Попробуй ещё раз через минуту.').catch(() => {})
     }
   })
 
@@ -467,6 +472,10 @@ export function createBot() {
     await ctx.reply(
       `Используй:\n/matches — найденные матчи\n/profile — твой профиль\n/found — нашёл что искал\n/restart — начать заново`
     )
+  })
+
+  bot.catch((err) => {
+    console.error('Bot error:', err.message, err.ctx?.update)
   })
 
   return bot
