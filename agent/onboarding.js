@@ -107,6 +107,11 @@ export async function conductOnboarding(userId, userMessage) {
   const maxPhase = (goalType === 'romantic' || !goalType) ? 7 : 6
 
   if (phase > maxPhase) {
+    // Phase complete but profile not finalized yet (e.g. previous Claude call failed)
+    if (!profile?.profile_confirmed) {
+      await finalizeProfile(userId, profile?.onboarding_data || {})
+      return { done: false, phaseComplete: true, finalPhase: true, message: null }
+    }
     return { done: true, message: null }
   }
 

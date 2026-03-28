@@ -32,10 +32,24 @@ export function createBot() {
         `Итак — что привело тебя сюда?`
       )
     } else if (profile.onboarding_phase < 8) {
-      await ctx.reply(
-        `С возвращением! Продолжим где остановились — фаза ${profile.onboarding_phase}/7.\n\n` +
-        `Продолжай рассказывать...`
-      )
+      await ctx.reply(`С возвращением! Продолжим где остановились.`)
+      try {
+        const result = await conductOnboarding(user.id, 'продолжи интервью, задай следующий вопрос')
+        if (result.message) await ctx.reply(result.message)
+        if (result.finalPhase) {
+          const freshProfile = await db.getProfile(user.id)
+          await updateProfileEmbedding(user.id, freshProfile)
+          const kb = new InlineKeyboard()
+            .text('✅ Всё верно', `confirm_profile:${user.id}`)
+            .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
+          await ctx.reply(
+            `✅ *Профиль готов!*\n\nВот как агент тебя описал:\n\n_${freshProfile?.showcase_public || '—'}_\n\nВсё верно?`,
+            { parse_mode: 'Markdown', reply_markup: kb }
+          )
+        }
+      } catch (e) {
+        console.error('Resume onboarding error:', e)
+      }
     } else {
       await ctx.reply(
         `С возвращением! Твой профиль готов.\n\n` +
