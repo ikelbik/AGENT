@@ -75,7 +75,7 @@ export const db = {
        FROM profiles p
        JOIN users u ON u.id = p.user_id
        WHERE p.user_id != $1
-         AND p.onboarding_phase = 8
+         AND p.profile_confirmed = TRUE
          AND p.embedding IS NOT NULL
          AND p.matching_active = TRUE
          AND p.user_id NOT IN (
@@ -97,7 +97,7 @@ export const db = {
        FROM profiles p
        JOIN users u ON u.id = p.user_id
        WHERE p.user_id != $1
-         AND p.onboarding_phase = 8
+         AND p.profile_confirmed = TRUE
          AND p.matching_active = TRUE
          AND p.user_id NOT IN (
            SELECT to_user_id FROM pings
@@ -114,7 +114,7 @@ export const db = {
     const { rows } = await pool.query(
       `SELECT u.id, u.telegram_id FROM users u
        JOIN profiles p ON p.user_id = u.id
-       WHERE p.onboarding_phase = 7 AND p.matching_active = TRUE`
+       WHERE p.profile_confirmed = TRUE AND p.matching_active = TRUE`
     )
     return rows
   },

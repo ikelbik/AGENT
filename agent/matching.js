@@ -339,8 +339,8 @@ export async function runMatching(userId) {
   const log = (...args) => console.log(`[match:${userId.slice(0,8)}]`, ...args)
 
   const profile = await db.getProfile(userId)
-  if (!profile || profile.onboarding_phase < 8) {
-    log('SKIP — profile incomplete, phase:', profile?.onboarding_phase)
+  if (!profile || !profile.profile_confirmed) {
+    log('SKIP — profile incomplete, confirmed:', profile?.profile_confirmed)
     return { error: 'Профиль не завершён' }
   }
   log('profile ok — goal:', profile.goal_type, '| persona:', !!profile.persona_ref)
