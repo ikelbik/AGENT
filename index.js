@@ -11,6 +11,7 @@ async function main() {
   process.once('SIGTERM', () => bot.stop())
 
   await bot.start({
+    drop_pending_updates: true,
     onStart: (info) => {
       console.log(`Bot @${info.username} started`)
       console.log('AgentNet is running')
