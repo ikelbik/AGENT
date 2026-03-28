@@ -158,10 +158,11 @@ export async function conductOnboarding(userId, userMessage) {
   const phase = (profile?.onboarding_phase || 0) + 1
 
   // Determine max phases based on goal_type
+  // Default to 7 (include private phase) — only skip it if goal is explicitly business/mentor
   const goalType = profile?.goal_type || profile?.onboarding_data?.goal_type
-  const isRomantic = !goalType ||
-    /romantic|романт|личн|партн|любов|отнош|физическ|интимн|свидан|встреч|знаком/i.test(String(goalType))
-  const maxPhase = isRomantic ? 7 : 6
+  const isNonRomantic = !!goalType &&
+    /^(business|бизнес|делов|mentor|ментор|наставн)/i.test(String(goalType))
+  const maxPhase = isNonRomantic ? 6 : 7
 
   if (phase > maxPhase) {
     // onboarding_phase === maxPhase means finalization failed last time — retry once
@@ -174,7 +175,7 @@ export async function conductOnboarding(userId, userMessage) {
   }
 
   // Skip phase 7 for non-romantic goals
-  if (phase === 7 && goalType && !isRomantic) {
+  if (phase === 7 && isNonRomantic) {
     await finalizeProfile(userId, profile?.onboarding_data || {})
     return { done: false, phaseComplete: true, finalPhase: true, message: null }
   }
@@ -212,7 +213,9 @@ ${phaseConfig.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 Собери информацию по этим полям: ${phaseConfig.outputFields.join(', ')}
 ${hasCollected ? `\nУЖЕ ИЗВЕСТНО О ПОЛЬЗОВАТЕЛЕ (из предыдущих фаз):\n${JSON.stringify(collectedData, null, 2)}\n` : ''}
 Если ты собрал достаточно информации по текущей фазе, закончи ответ строкой:
-PHASE_COMPLETE:{"field1":"value1","field2":"value2"}`
+PHASE_COMPLETE:{"field1":"value1","field2":"value2"}
+
+ВАЖНО для поля goal_type (фаза 1): используй ТОЛЬКО одно из трёх значений: "romantic", "business", "mentor"`
 
   const messages = [
     ...history.map(h => ({ role: h.role, content: h.content })),
