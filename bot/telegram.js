@@ -81,6 +81,42 @@ export function createBot() {
   // ─── /seed (TEST_MODE only) ────────────────────────────────────────────────
 
   if (process.env.TEST_MODE === 'true') {
+    bot.command('skip', async (ctx) => {
+      const user = await db.upsertUser(ctx.from.id, ctx.from.username)
+      const targetPhase = parseInt(ctx.match?.trim() || '6') - 1
+
+      const fakeData = {
+        goal_type: 'романтические отношения',
+        urgency_signal: 'давнее желание',
+        self_awareness_level: 'высокий',
+        archetype_tags: ['creative', 'introvert'],
+        decision_style: 'intuitive',
+        domain_context: 'tech',
+        desired_archetype: 'открытый, глубокий',
+        implicit_expectations: 'честность',
+        complementarity_vs_similarity: 'дополнение',
+        hard_filters: {},
+        geographic_constraints: 'тот же город',
+        value_dealbreakers: 'ложь',
+        communication_directness: 0.75,
+        contact_frequency: 'несколько раз в неделю',
+        openness_score: 0.8,
+        conflict_response: 'спокойно выясняю',
+        attachment_signal: 'умеренная тревога',
+        self_reflection_capacity: 'высокая'
+      }
+
+      await db.upsertProfile(user.id, {
+        onboarding_phase: targetPhase,
+        onboarding_data: fakeData
+      })
+
+      await ctx.reply(
+        `⏭ *Перемотка к фазе ${targetPhase + 1}*\n\nТеперь напиши что-нибудь — бот продолжит с этой фазы.`,
+        { parse_mode: 'Markdown' }
+      )
+    })
+
     bot.command('seed', async (ctx) => {
       const user = await db.upsertUser(ctx.from.id, ctx.from.username)
       const arg = ctx.match?.trim() || 'romantic'
