@@ -80,31 +80,68 @@ export function scoreCompatibility(profileA, profileB) {
   }
 }
 
+// ─── Goal type compatibility ──────────────────────────────────────────────────
+
+function isGoalCompatible(goalA, goalB) {
+  if (!goalA || !goalB) return true
+  if (goalA === goalB) return true
+  // mentor is compatible with anyone
+  if (goalA === 'mentor' || goalB === 'mentor') return true
+  return false
+}
+
+// ─── Hard filters check via Claude ───────────────────────────────────────────
+
+async function passesHardFilters(profileA, profileB) {
+  const filtersA = profileA.hard_filters
+  const filtersB = profileB.hard_filters
+  const empty = v => !v || (typeof v === 'object' && Object.keys(v).length === 0)
+  if (empty(filtersA) && empty(filtersB)) return true
+
+  const response = await claude.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 10,
+    messages: [{
+      role: 'user',
+      content: `Проверь совместимость жёстких фильтров двух профилей.
+ФИЛЬТРЫ A: ${JSON.stringify(filtersA)}
+ФИЛЬТРЫ B: ${JSON.stringify(filtersB)}
+ПРОФИЛЬ A: ${profileA.showcase_public || ''}
+ПРОФИЛЬ B: ${profileB.showcase_public || ''}
+Ответь ТОЛЬКО "yes" или "no".`
+    }]
+  })
+
+  return response.content[0].text.trim().toLowerCase().startsWith('yes')
+}
+
 // ─── Find candidates ──────────────────────────────────────────────────────────
 
 export async function findCandidates(userId, profile) {
-  if (!profile.embedding) {
-    await updateProfileEmbedding(userId, profile)
-    const updated = await db.getProfile(userId)
-    if (!updated?.embedding) return []
-    profile = updated
+  let candidates
+
+  if (profile.embedding) {
+    const embeddingArray = typeof profile.embedding === 'string'
+      ? JSON.parse(profile.embedding)
+      : profile.embedding
+    candidates = await db.findCandidates(userId, embeddingArray, 30)
+  } else {
+    candidates = await db.findCandidatesWithoutEmbedding(userId, 50)
   }
 
-  const embeddingArray = typeof profile.embedding === 'string'
-    ? JSON.parse(profile.embedding)
-    : profile.embedding
-
-  const candidates = await db.findCandidates(userId, embeddingArray, 30)
+  // Filter by goal type compatibility first (cheap, no API calls)
+  const goalFiltered = candidates.filter(c =>
+    isGoalCompatible(profile.goal_type, c.goal_type)
+  )
 
   // Score and sort
-  return candidates
-    .map(c => ({
-      ...c,
-      scoring: scoreCompatibility(profile, c)
-    }))
+  const scored = goalFiltered
+    .map(c => ({ ...c, scoring: scoreCompatibility(profile, c) }))
     .filter(c => c.scoring.action !== 'skip')
     .sort((a, b) => b.scoring.score - a.scoring.score)
     .slice(0, 10)
+
+  return scored
 }
 
 // ─── Generate cold ping ───────────────────────────────────────────────────────
@@ -179,11 +216,18 @@ export async function runMatching(userId) {
   }
 
   const results = { found: candidates.length, pings: [], watchlist: [] }
+  const MAX_PINGS_PER_RUN = parseInt(process.env.PINGS_PER_RUN || '5')
 
-  for (const candidate of candidates.slice(0, 3)) {
+  for (const candidate of candidates) {
+    if (results.pings.length >= MAX_PINGS_PER_RUN) break
+
     const { scoring } = candidate
 
     if (scoring.action === 'ping') {
+      // Check hard filters via Claude before sending ping
+      const passes = await passesHardFilters(profile, candidate)
+      if (!passes) continue
+
       const withinQuota = await db.checkPingQuota(userId)
       if (!withinQuota) break
 

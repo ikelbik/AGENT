@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq'
-import { connection } from './queues.js'
+import { connection, scheduleMatching, startMatchingScheduler } from './queues.js'
 import { runMatching } from '../agent/matching.js'
 import { processTurn } from '../agent/proxy.js'
 import { db } from '../db/postgres.js'
@@ -124,5 +124,19 @@ new Worker('notify', async (job) => {
   const b = await getBot()
   await b.api.sendMessage(telegramId, message, { parse_mode: 'Markdown', ...extra })
 }, { connection })
+
+// ─── Scheduler worker ─────────────────────────────────────────────────────────
+
+new Worker('scheduler', async (job) => {
+  if (job.name !== 'match-all') return
+  const users = await db.getActiveMatchingUsers()
+  console.log(`[scheduler] Running matching for ${users.length} active users`)
+  for (const user of users) {
+    await scheduleMatching(user.id)
+  }
+}, { connection })
+
+// Start periodic scheduler on worker boot
+startMatchingScheduler()
 
 console.log('Workers started')

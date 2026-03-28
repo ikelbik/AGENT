@@ -37,4 +37,15 @@ export async function scheduleNotification(telegramId, message, extra = {}) {
   })
 }
 
+export const schedulerQueue = new Queue('scheduler', { connection })
+
+export async function startMatchingScheduler() {
+  const intervalHours = parseInt(process.env.MATCHING_INTERVAL_HOURS || '24')
+  await schedulerQueue.add('match-all', {}, {
+    repeat: { every: intervalHours * 60 * 60 * 1000 },
+    jobId: 'periodic-match-all'
+  })
+  console.log(`[scheduler] Matching scheduled every ${intervalHours}h`)
+}
+
 export { connection }

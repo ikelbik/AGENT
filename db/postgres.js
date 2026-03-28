@@ -67,7 +67,7 @@ export const db = {
     return rows.reverse()
   },
 
-  // Find candidates by vector similarity, excluding already-pinged
+  // Find candidates by vector similarity, excluding already-pinged and inactive
   async findCandidates(userId, embedding, limit = 20) {
     const { rows } = await pool.query(
       `SELECT p.*, u.telegram_id, u.username,
@@ -77,6 +77,7 @@ export const db = {
        WHERE p.user_id != $1
          AND p.onboarding_phase = 7
          AND p.embedding IS NOT NULL
+         AND p.matching_active = TRUE
          AND p.user_id NOT IN (
            SELECT to_user_id FROM pings
            WHERE from_user_id = $1
@@ -87,6 +88,42 @@ export const db = {
       [userId, JSON.stringify(embedding), limit]
     )
     return rows
+  },
+
+  // Find candidates without embedding (fallback)
+  async findCandidatesWithoutEmbedding(userId, limit = 50) {
+    const { rows } = await pool.query(
+      `SELECT p.*, u.telegram_id, u.username
+       FROM profiles p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.user_id != $1
+         AND p.onboarding_phase = 7
+         AND p.matching_active = TRUE
+         AND p.user_id NOT IN (
+           SELECT to_user_id FROM pings
+           WHERE from_user_id = $1
+             AND created_at > NOW() - INTERVAL '7 days'
+         )
+       LIMIT $2`,
+      [userId, limit]
+    )
+    return rows
+  },
+
+  async getActiveMatchingUsers() {
+    const { rows } = await pool.query(
+      `SELECT u.id, u.telegram_id FROM users u
+       JOIN profiles p ON p.user_id = u.id
+       WHERE p.onboarding_phase = 7 AND p.matching_active = TRUE`
+    )
+    return rows
+  },
+
+  async setMatchingActive(userId, active) {
+    await pool.query(
+      `UPDATE profiles SET matching_active = $2, matching_stopped_at = $3 WHERE user_id = $1`,
+      [userId, active, active ? null : new Date()]
+    )
   },
 
   async createPing(fromUserId, toUserId, score, hypothesis, pingText) {

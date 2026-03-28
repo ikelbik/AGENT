@@ -36,7 +36,7 @@ export function createBot() {
     } else {
       await ctx.reply(
         `С возвращением! Твой профиль готов.\n\n` +
-        `Используй:\n/match — найти кандидатов\n/pings — входящие пинги\n/dialogue — активный диалог\n/profile — твой профиль`
+        `Используй:\n/pings — входящие пинги\n/dialogue — активный диалог\n/profile — твой профиль\n/found — нашёл то что искал`
       )
     }
   })
@@ -63,28 +63,17 @@ export function createBot() {
     )
   })
 
-  // ─── /match ────────────────────────────────────────────────────────────────
+  // ─── /found ────────────────────────────────────────────────────────────────
 
-  bot.command('match', async (ctx) => {
+  bot.command('found', async (ctx) => {
     const user = await db.getUserByTelegramId(ctx.from.id)
     if (!user) return ctx.reply('Сначала напиши /start')
 
-    const profile = await db.getProfile(user.id)
-    if (!profile || profile.onboarding_phase < 7) {
-      return ctx.reply('Сначала заверши онбординг — продолжай отвечать на вопросы.')
-    }
-
-    await ctx.reply('🔍 Ищу кандидатов... Это займёт минуту.')
-
-    // Update embedding if needed
-    if (!profile.embedding) {
-      await updateProfileEmbedding(user.id, profile)
-    }
-
-    await scheduleMatching(user.id)
+    await db.setMatchingActive(user.id, false)
     await ctx.reply(
-      '✅ Запустил поиск. Если найду подходящих — пришлю пинги от твоего имени.\n' +
-      'Обычно это занимает 1-2 минуты.'
+      '🎉 Поиск остановлен.\n\n' +
+      'Рады что ты нашёл то что искал. Удачи!\n\n' +
+      'Если захочешь возобновить поиск — напиши /start.'
     )
   })
 
@@ -269,12 +258,13 @@ export function createBot() {
         await ctx.reply(result.message)
 
         if (result.finalPhase) {
-          // Onboarding complete
+          // Onboarding complete — start matching automatically
           await updateProfileEmbedding(user.id, await db.getProfile(user.id))
+          await scheduleMatching(user.id)
           await ctx.reply(
             `✅ *Профиль готов!*\n\n` +
-            `Теперь я знаю тебя достаточно чтобы искать подходящих людей.\n\n` +
-            `Используй:\n/match — запустить поиск\n/pings — входящие пинги\n/profile — твой профиль`,
+            `Запускаю поиск — если найду подходящих людей, пришлю пинги.\n\n` +
+            `Используй:\n/pings — входящие пинги\n/profile — твой профиль\n/found — нашёл то что искал`,
             { parse_mode: 'Markdown' }
           )
         }
@@ -296,10 +286,10 @@ export function createBot() {
     // General assistant mode
     await ctx.reply(
       `Не понял команду. Используй:\n` +
-      `/match — найти кандидатов\n` +
       `/pings — входящие пинги\n` +
       `/dialogue — активный диалог\n` +
-      `/profile — твой профиль`
+      `/profile — твой профиль\n` +
+      `/found — нашёл то что искал`
     )
   })
 

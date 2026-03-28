@@ -138,3 +138,11 @@ CREATE OR REPLACE TRIGGER profiles_updated_at
 CREATE OR REPLACE TRIGGER dialogues_updated_at
   BEFORE UPDATE ON dialogues
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ─── Migration: matching control ─────────────────────────────────────────────
+
+DO $$ BEGIN
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_active BOOLEAN DEFAULT TRUE;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_stopped_at TIMESTAMPTZ;
+EXCEPTION WHEN others THEN NULL;
+END $$;
