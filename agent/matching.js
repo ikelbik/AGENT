@@ -6,6 +6,14 @@ const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 // Embedding removed — using score-based matching only
 export async function updateProfileEmbedding() {}
 
+// Normalize goal_type regardless of language/format Claude used
+function normalizeGoal(g) {
+  if (!g) return 'business'
+  if (/romantic|романт|личн|партн|любов|отнош|физическ|интимн|свидан|встреч|знаком/i.test(g)) return 'romantic'
+  if (/mentor|ментор|наставн/i.test(g)) return 'mentor'
+  return 'business'
+}
+
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
 const WEIGHTS = {
@@ -19,7 +27,7 @@ export function scoreCompatibility(profileA, profileB) {
   if (!isOrientationCompatible(profileA, profileB)) return { score: 0, dimensions: {}, action: 'skip' }
   if (!isRelationshipFormatCompatible(profileA, profileB)) return { score: 0, dimensions: {}, action: 'skip' }
 
-  const goalType = profileA.goal_type || 'business'
+  const goalType = normalizeGoal(profileA.goal_type)
   const w = WEIGHTS[goalType] || WEIGHTS.business
 
   // Similarity score (1 = identical, 0 = opposite)
