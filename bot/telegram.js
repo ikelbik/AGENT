@@ -342,7 +342,7 @@ export function createBot() {
       try {
         const result = await conductOnboarding(user.id, ctx.message.text)
 
-        await ctx.reply(result.message)
+        if (result.message) await ctx.reply(result.message)
 
         if (result.finalPhase) {
           // Show showcase for confirmation before starting matching
