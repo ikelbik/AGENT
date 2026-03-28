@@ -210,62 +210,127 @@ export async function findCandidates(userId, profile) {
   return scored
 }
 
-// ─── Generate cold ping ───────────────────────────────────────────────────────
+// ─── Agent-to-agent conversation (two independent agents) ────────────────────
+//
+// Each agent knows ONLY its own persona and sees only incoming messages.
+// Neither agent knows the other's profile — friction is real, not simulated.
 
-export async function generatePing(senderProfile, recipientProfile, scoring, tone = 'direct') {
-  const toneInstructions = {
-    direct: 'Прямой, конкретный, без лишних слов. Сразу к сути.',
-    curious: 'Любопытный, тёплый, через искреннее наблюдение.',
-    business: 'Деловой, чёткий, уважающий время собеседника.'
-  }
+async function agentSpeak(myPersona, incomingMessage, conversationSoFar, isOpener) {
+  const system = `Ты — агент, который представляет конкретного человека в разговоре с незнакомцем.
 
-  const prompt = `Напиши холодный пинг от агента А агенту Б.
+ТВОЯ ЛИЧНОСТЬ:
+${myPersona}
 
-ПРОФИЛЬ ОТПРАВИТЕЛЯ:
-${JSON.stringify(senderProfile, null, 2)}
+Правила:
+— Говори строго от этой личности: её ценности, стиль, интересы
+— Ты НЕ знаешь профиль собеседника — только то что он написал
+— Сообщение короткое: 25–40 слов, живое, естественное
+— Без формальностей, без шаблонов
+— Можешь задать вопрос, можно ответить на вопрос, можно поделиться мыслью`
 
-ПРОФИЛЬ ПОЛУЧАТЕЛЯ:
-${JSON.stringify(recipientProfile, null, 2)}
-
-SCORE СОВМЕСТИМОСТИ: ${Math.round(scoring.score * 100)}%
-СИЛЬНЫЕ СТОРОНЫ: ${Object.entries(scoring.dimensions)
-  .filter(([, v]) => v > 0.65)
-  .map(([k]) => k)
-  .join(', ')}
-
-ТОН: ${toneInstructions[tone] || toneInstructions.direct}
-
-СТРУКТУРА ПИНГА (4 блока, до 80 слов):
-1. ЗЕРКАЛО: конкретная деталь из витрины получателя (1 предложение)
-2. ГИПОТЕЗА: почему мы могли бы быть совместимы (1-2 предложения)
-3. ВОПРОС: один вопрос который важнее всего (1 предложение)
-4. ВЫХОД: лёгкий отказ (1 короткое предложение)
-
-Верни только текст пинга без заголовков блоков.`
+  const messages = isOpener
+    ? [{ role: 'user', content: 'Напиши первое сообщение незнакомому человеку. Только текст сообщения.' }]
+    : [
+        ...conversationSoFar,
+        { role: 'user', content: incomingMessage }
+      ]
 
   const response = await claude.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 300,
-    messages: [{ role: 'user', content: prompt }]
+    max_tokens: 120,
+    system,
+    messages
   })
 
-  const pingText = response.content[0].text
+  return response.content[0].text.trim()
+}
 
-  // Generate hypothesis separately for internal use
-  const hypothesisPrompt = `В одном предложении: почему эти два профиля могут быть совместимы?
-Профиль A: ${senderProfile.showcase_public}
-Профиль B: ${recipientProfile.showcase_public}`
+async function agentConversation(profileA, profileB) {
+  const personaA = profileA.persona_ref || profileA.showcase_public || ''
+  const personaB = profileB.persona_ref || profileB.showcase_public || ''
 
-  const hypResponse = await claude.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 100,
-    messages: [{ role: 'user', content: hypothesisPrompt }]
-  })
-
-  return {
-    pingText,
-    hypothesis: hypResponse.content[0].text
+  if (!personaA || !personaB) {
+    return { score: 0.5, hypothesis: 'Недостаточно данных для диалога', openingMessage: '' }
   }
+
+  // Each agent maintains its own conversation history (only sees own side + incoming)
+  const historyA = [] // what agent A has said and received
+  const historyB = [] // what agent B has said and received
+  const transcript = []
+
+  // Turn 1: A opens
+  const msg1 = await agentSpeak(personaA, null, [], true)
+  transcript.push({ from: 'A', text: msg1 })
+  historyA.push({ role: 'assistant', content: msg1 })
+  historyB.push({ role: 'user',      content: msg1 })
+
+  // Turn 2: B responds (knows only A's opening, not A's profile)
+  const msg2 = await agentSpeak(personaB, msg1, historyB.slice(0, -1), false)
+  transcript.push({ from: 'B', text: msg2 })
+  historyB.push({ role: 'assistant', content: msg2 })
+  historyA.push({ role: 'user',      content: msg2 })
+
+  // Turn 3: A replies
+  const msg3 = await agentSpeak(personaA, msg2, historyA.slice(0, -1), false)
+  transcript.push({ from: 'A', text: msg3 })
+  historyA.push({ role: 'assistant', content: msg3 })
+  historyB.push({ role: 'user',      content: msg3 })
+
+  // Turn 4: B closes
+  const msg4 = await agentSpeak(personaB, msg3, historyB.slice(0, -1), false)
+  transcript.push({ from: 'B', text: msg4 })
+
+  // Neutral evaluator — sees both personas and the conversation
+  const evalResponse = await claude.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 150,
+    messages: [{
+      role: 'user',
+      content: `Оцени совместимость двух людей по их разговору.
+
+Профиль A: ${personaA}
+Профиль B: ${personaB}
+
+Разговор:
+A: ${msg1}
+B: ${msg2}
+A: ${msg3}
+B: ${msg4}
+
+Ответь JSON одной строкой:
+{"score":0.0-1.0,"hypothesis":"одно предложение о совместимости"}`
+    }]
+  })
+
+  let score = 0.5
+  let hypothesis = 'Умеренная совместимость'
+  try {
+    const parsed = JSON.parse(evalResponse.content[0].text.match(/\{.+\}/)?.[0] || '{}')
+    score     = Math.min(1, Math.max(0, parsed.score     ?? 0.5))
+    hypothesis = parsed.hypothesis ?? hypothesis
+  } catch (e) { /* keep defaults */ }
+
+  return { score, hypothesis, openingMessage: msg1, transcript }
+}
+
+// ─── Agent answers a question on behalf of its user ──────────────────────────
+
+export async function agentAnswerQuestion(question, targetPersona) {
+  const response = await claude.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 200,
+    system: `Ты — агент, представляющий человека. Отвечай на вопросы от его лица, опираясь на его профиль.
+Если вопрос личный и требует подтверждения от реального человека — выведи ROUTE_TO_USER и больше ничего.
+Если можешь ответить уверенно из профиля — ответь кратко (1-2 предложения).
+
+ПРОФИЛЬ ЧЕЛОВЕКА:
+${targetPersona}`,
+    messages: [{ role: 'user', content: question }]
+  })
+
+  const text = response.content[0].text.trim()
+  if (text.startsWith('ROUTE_TO_USER')) return { routed: true, answer: null }
+  return { routed: false, answer: text }
 }
 
 // ─── Run matching for a user ──────────────────────────────────────────────────
@@ -278,56 +343,42 @@ export async function runMatching(userId) {
 
   const candidates = await findCandidates(userId, profile)
   if (candidates.length === 0) {
-    return { found: 0, pings: [], watchlist: [] }
+    return { found: 0, matches: [] }
   }
 
-  const results = { found: candidates.length, pings: [], watchlist: [] }
-  const MAX_PINGS_PER_RUN = parseInt(process.env.PINGS_PER_RUN || '5')
+  const results = { found: candidates.length, matches: [] }
+  const MAX_PER_RUN = parseInt(process.env.PINGS_PER_RUN || '5')
 
   for (const candidate of candidates) {
-    if (results.pings.length >= MAX_PINGS_PER_RUN) break
+    if (results.matches.length >= MAX_PER_RUN) break
 
     const { scoring } = candidate
+    if (scoring.action === 'skip') continue
 
-    if (scoring.action === 'ping') {
-      // Check hard filters via Claude before sending ping
-      const passes = await passesHardFilters(profile, candidate)
-      if (!passes) continue
+    const passes = await passesHardFilters(profile, candidate)
+    if (!passes) continue
 
-      const withinQuota = await db.checkPingQuota(userId)
-      if (!withinQuota) break
+    // Agent-to-agent conversation
+    const conv = await agentConversation(profile, candidate)
 
-      const { pingText, hypothesis } = await generatePing(
-        profile,
-        candidate,
-        scoring,
-        detectTone(candidate)
-      )
+    // Combined score: 40% data-based + 60% conversation-based
+    const combinedScore = scoring.score * 0.4 + conv.score * 0.6
+    if (combinedScore < 0.4) continue
 
-      const ping = await db.createPing(
-        userId,
-        candidate.user_id,
-        scoring.score,
-        hypothesis,
-        pingText
-      )
+    const match = await db.createMatch(
+      userId,
+      candidate.user_id,
+      combinedScore,
+      conv.hypothesis,
+      conv.transcript || []
+    )
 
-      results.pings.push({
-        pingId: ping.id,
-        recipientId: candidate.user_id,
-        score: scoring.score,
-        hypothesis
-      })
-
-    } else if (scoring.action === 'watchlist') {
-      await db.addToWatchlist(
-        userId,
-        candidate.user_id,
-        scoring.score,
-        'Умеренная совместимость, добавлен в watchlist'
-      )
-      results.watchlist.push({ userId: candidate.user_id, score: scoring.score })
-    }
+    results.matches.push({
+      matchId:  match.id,
+      userBId:  candidate.user_id,
+      score:    combinedScore,
+      hypothesis: conv.hypothesis
+    })
   }
 
   return results

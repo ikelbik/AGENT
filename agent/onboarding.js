@@ -3,379 +3,151 @@ import { db } from '../db/postgres.js'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// ─── Phase definitions ────────────────────────────────────────────────────────
+export async function updateProfileEmbedding() {} // stub — embedding removed
 
-export const PHASES = {
-  1: {
-    name: 'Якорь',
-    goal: 'Понять контекст и тип цели пользователя',
-    questions: [
-      'Что привело тебя сюда — что-то конкретное случилось, или это давнее желание?',
-      'Скажи одним словом: что сейчас важнее — партнёрство, рост, или связь?',
-      'Ты уже знаешь кого ищешь, или хочешь разобраться в этом вместе?'
-    ],
-    outputFields: ['goal_type', 'urgency_signal', 'self_awareness_level']
-  },
-  2: {
-    name: 'Автопортрет',
-    goal: 'Построить образ человека через конкретные ситуации',
-    questions: [
-      'Опиши период, когда ты был в своей лучшей форме. Что происходило?',
-      'Как ты обычно принимаешь важные решения — долго взвешиваешь или чувствуешь сразу?',
-      'Чем ты отличаешься от большинства людей в твоей сфере?'
-    ],
-    outputFields: ['archetype_tags', 'decision_style', 'domain_context']
-  },
-  3: {
-    name: 'Образ желаемого',
-    goal: 'Выяснить кого ищут через воспоминания и контрасты',
-    questions: [
-      'Вспомни человека, с которым тебе было бы идеально. Что в нём главное?',
-      'Что тебя обычно разочаровывает в людях уже после первого месяца общения?',
-      'Тебе важнее чтобы этот человек тебя дополнял или разделял твои взгляды?'
-    ],
-    outputFields: ['desired_archetype', 'implicit_expectations', 'complementarity_vs_similarity']
-  },
-  4: {
-    name: 'Жёсткие фильтры',
-    goal: 'Установить dealbreakers',
-    questions: [
-      'Есть ли что-то, при наличии чего у другого человека разговор просто не стоит начинать?',
-      'Какие ограничения по расстоянию или формату для тебя принципиальны?',
-      'Есть ли ценности, несовпадение по которым для тебя критично?'
-    ],
-    outputFields: ['hard_filters', 'geographic_constraints', 'value_dealbreakers']
-  },
-  5: {
-    name: 'Стиль взаимодействия',
-    goal: 'Понять коммуникационный стиль и ритм',
-    questions: [
-      'Ты предпочитаешь когда говорят прямо, даже если неудобно, или ценишь такт?',
-      'Как часто ты готов общаться с новым человеком на старте?',
-      'Тебе комфортно когда другой задаёт много вопросов о тебе?'
-    ],
-    outputFields: ['communication_directness', 'contact_frequency', 'openness_score']
-  },
-  6: {
-    name: 'Стресс-тест',
-    goal: 'Проверить реакцию на неопределённость и несогласие',
-    questions: [
-      'Представь: вы хорошо общаетесь три недели, а потом другой человек резко замолчал. Твоя первая реакция?',
-      'Если я скажу что по профилю ты больше подходишь для делового партнёрства, а не для того что ты назвал — как отнесёшься?',
-      'Вспомни момент когда ты сильно ошибся в человеке. Что это тебе дало?'
-    ],
-    outputFields: ['conflict_response', 'attachment_signal', 'self_reflection_capacity']
-  },
-  7: {
-    name: 'Приватный профиль',
-    goal: 'Собрать физические параметры респондента и партнёра, ориентацию, формат отношений и интимные предпочтения',
-    questions: [
-      'Последний блок — полностью приватный, данные видит только алгоритм. Начнём с тебя: твой пол?',
-      'Сколько тебе лет?',
-      'Твой рост и примерный вес? Можно округлённо.',
-      'Как бы ты описал своё телосложение — худощавое, среднее, спортивное, плотное?',
-      'Твоя сексуальная ориентация — гетеро, гей/лесби, би, другое?',
-      'Какой формат отношений тебе подходит сейчас — серьёзные моногамные, открытые, casual, полиамория?',
-      'Теперь о партнёре. Какой пол тебя привлекает?',
-      'Есть ли предпочтения по возрасту партнёра? Например "25-35" или "не старше 40".',
-      'Есть ли требования по росту или телосложению партнёра?',
-      'Есть ли специфические предпочтения в интимной сфере которые важно чтобы партнёр разделял? Говори открыто — это видит только алгоритм.',
-      'Есть ли в интимном плане абсолютные нет — то с чем ты точно не совместим?'
-    ],
-    outputFields: ['gender', 'age', 'physical_self', 'orientation', 'relationship_format', 'partner_gender_preference', 'physical_preferences', 'intimate_tags', 'intimate_dealbreakers'],
-    onlyForGoals: ['romantic']
-  }
-}
+// ─── System prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `Ты — агент-интервьюер сервиса знакомств AgentNet.
-Твоя задача: провести онбординг-интервью по 7 фазам, собирая информацию о пользователе.
 
-Правила:
-- Задавай ОДИН вопрос за раз, выбирая из пула фазы тот что наиболее уместен
-- Слушай внимательно, задавай естественные уточнения если ответ неполный
-- После 2-3 содержательных ответов в фазе — переходи к следующей
-- Тон: тёплый, любопытный, без формальностей, без осуждения
-- Не объясняй пользователю структуру интервью — просто веди разговор
-- Фаза 7 — приватная: подчеркни что данные видит только алгоритм, не люди
-- В конце каждой фазы извлеки структурированные данные в JSON
-- ОБЯЗАТЕЛЬНО: каждый твой ответ должен заканчиваться вопросом — никогда не оставляй пользователя без вопроса
-- ЗАПРЕЩЕНО: никогда не спрашивай телефон, email, имя, контактные данные — связь осуществляется только через Telegram, он уже известен системе
+ЗАДАЧА: собери данные профиля через свободный разговор. Не анкета — живой диалог.
 
-Текущая фаза и цель будут указаны в контексте.`
+КАК РАБОТАТЬ:
+— Слушай внимательно, извлекай данные из каждого ответа
+— Задавай уточняющий вопрос ТОЛЬКО если не хватает важных данных для цели
+— По одному вопросу за раз
+— Тон: тёплый, любопытный, без осуждения
+— Для romantic: приватные вопросы (тело, интимные предпочтения) в конце, предупреди что видит только алгоритм
+— ЗАПРЕЩЕНО: не спрашивай имя, телефон, email, адрес
 
-// ─── Phase summary ────────────────────────────────────────────────────────────
+ПОЛЯ ДЛЯ СБОРА:
+Базовые (все цели):
+• goal_type: "romantic" | "business" | "mentor"
+• archetype_tags: ["tag1","tag2"] — теги личности
+• decision_style: "intuitive" | "analytical" | "mixed"
+• communication_directness: 0.0–1.0
+• openness_score: 0.0–1.0
+• hard_filters: {} — жёсткие ограничения
+• style_vector: {"directness":0-1,"pace":0-1,"structure":0-1}
+• showcase_public: "2-3 предложения о человеке от третьего лица для витрины"
+• showcase_tags: ["tag1","tag2"]
 
-function buildPhaseSummary(phaseData) {
-  if (!phaseData || Object.keys(phaseData).length === 0) return null
+Для "romantic" дополнительно:
+• gender, age
+• physical_self: {"height":см,"weight":кг,"body_type":"строка"}
+• orientation: "heterosexual"|"homosexual"|"bisexual"|"other"
+• relationship_format: "serious"|"casual"|"open"|"poly"
+• partner_gender_preference: "male"|"female"|"any"
+• physical_preferences: {"age_min":N,"age_max":N,"height_min":N,"height_max":N}
+• intimate_tags: [] — предпочтения
+• intimate_dealbreakers: [] — абсолютные нет
 
-  const labels = {
-    goal_type:                  'Цель',
-    urgency_signal:             'Срочность',
-    self_awareness_level:       'Самопознание',
-    archetype_tags:             'Теги',
-    decision_style:             'Стиль решений',
-    domain_context:             'Контекст',
-    desired_archetype:          'Образ желаемого',
-    implicit_expectations:      'Ожидания',
-    complementarity_vs_similarity: 'Дополнение или сходство',
-    hard_filters:               'Фильтры',
-    geographic_constraints:     'География',
-    value_dealbreakers:         'Ценностные нет',
-    communication_directness:   'Прямолинейность',
-    contact_frequency:          'Частота общения',
-    openness_score:             'Открытость',
-    conflict_response:          'Реакция на конфликт',
-    attachment_signal:          'Привязанность',
-    self_reflection_capacity:   'Рефлексия',
-    gender:                     'Пол',
-    age:                        'Возраст',
-    orientation:                'Ориентация',
-    relationship_format:        'Формат отношений',
-    physical_self:              'Физические данные',
-    physical_preferences:       'Предпочтения партнёра',
-    intimate_tags:              'Предпочтения',
-    intimate_dealbreakers:      'Интимные нет'
-  }
+ФОРМАТ КАЖДОГО ОТВЕТА:
+[текст разговора]
 
-  const lines = Object.entries(phaseData)
-    .filter(([, v]) => v !== null && v !== undefined && v !== '')
-    .map(([k, v]) => {
-      const label = labels[k] || k
-      const val = Array.isArray(v) ? v.join(', ')
-        : typeof v === 'object' ? Object.entries(v).map(([kk, vv]) => `${kk}: ${vv}`).join(', ')
-        : String(v)
-      return `• ${label}: ${val}`
-    })
+DATA:{"goal_type":"...","field":"value"} ← однострочный JSON, только поля о которых уверен
 
-  if (lines.length === 0) return null
-  return `📋 *Зафиксировал:*\n${lines.join('\n')}`
-}
+Когда собрал ВСЕ нужные поля для цели пользователя — добавь после DATA:
+DONE
+PERSONA_REF:Я — [3–5 предложений от первого лица: кто ты, твои особенности и стиль, кого ищешь и почему]`
 
 // ─── Main onboarding function ─────────────────────────────────────────────────
 
 export async function conductOnboarding(userId, userMessage) {
   const profile = await db.getProfile(userId)
-  const phase = (profile?.onboarding_phase || 0) + 1
 
-  // Determine max phases based on goal_type
-  // Default to 7 (include private phase) — only skip it if goal is explicitly business/mentor
-  const goalType = profile?.goal_type || profile?.onboarding_data?.goal_type
-  const isNonRomantic = !!goalType &&
-    /^(business|бизнес|делов|mentor|ментор|наставн)/i.test(String(goalType))
-  const maxPhase = isNonRomantic ? 6 : 7
-
-  if (phase > maxPhase) {
-    // onboarding_phase === maxPhase means finalization failed last time — retry once
-    if (profile.onboarding_phase === maxPhase) {
-      await finalizeProfile(userId, profile?.onboarding_data || {})
-      return { done: false, phaseComplete: true, finalPhase: true, message: null }
-    }
-    // onboarding_phase === 8 means already finalized — just waiting for confirmation
+  if (profile?.onboarding_phase === 8) {
     return { done: true, message: null }
   }
 
-  // Skip phase 7 for non-romantic goals
-  if (phase === 7 && isNonRomantic) {
-    await finalizeProfile(userId, profile?.onboarding_data || {})
-    return { done: false, phaseComplete: true, finalPhase: true, message: null }
-  }
+  const history = await db.getRecentConversation(userId, 40)
+  const knownData = profile?.onboarding_data || {}
 
-  const phaseConfig = PHASES[phase]
-  const history = await db.getRecentConversation(userId, 60)
-
-  // Build phase-aware system prompt
-  const collectedData = profile?.onboarding_data || {}
-  const hasCollected = Object.keys(collectedData).length > 0
-
-  // Phase 7 gets a dedicated system prompt — no filtering, explicit questions
-  const basePrompt = phase === 7
-    ? `Ты — AI-агент сервиса подбора партнёров. Сейчас ты проводишь приватную часть анкеты.
-Пользователь уже прошёл 6 фаз интервью. Это последняя фаза — она полностью приватная.
-Данные из этой фазы видит ТОЛЬКО алгоритм подбора, не другие пользователи и не люди.
-
-Правила этой фазы:
-- Задавай вопросы строго по списку ниже, по одному
-- Тон нейтральный, медицинский, без оценок и смущения
-- Это безопасное пространство — никакого осуждения
-- Пользователь может пропустить любой вопрос написав "пропустить"
-- ОБЯЗАТЕЛЬНО: каждый ответ заканчивай следующим вопросом из списка
-- ЗАПРЕЩЕНО: не спрашивай телефон, email, имя — только Telegram, он уже известен
-- В конце фазы добавь строку PHASE_COMPLETE:{...}`
-    : SYSTEM_PROMPT
-
-  const systemPrompt = `${basePrompt}
-
-ТЕКУЩАЯ ФАЗА: ${phase}/${maxPhase} — "${phaseConfig.name}"
-ЦЕЛЬ ФАЗЫ: ${phaseConfig.goal}
-ВОПРОСЫ (задавай строго по порядку, по одному):
-${phaseConfig.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
-
-Собери информацию по этим полям: ${phaseConfig.outputFields.join(', ')}
-${hasCollected ? `\nУЖЕ ИЗВЕСТНО О ПОЛЬЗОВАТЕЛЕ (из предыдущих фаз):\n${JSON.stringify(collectedData, null, 2)}\n` : ''}
-Если ты собрал достаточно информации по текущей фазе, закончи ответ строкой:
-PHASE_COMPLETE:{"field1":"value1","field2":"value2"}
-
-ВАЖНО для поля goal_type (фаза 1): используй ТОЛЬКО одно из трёх значений: "romantic", "business", "mentor"`
-
-  const messages = [
-    ...history.map(h => ({ role: h.role, content: h.content })),
-    { role: 'user', content: userMessage }
-  ]
+  const knownStr = Object.keys(knownData).length > 0
+    ? `\n\nУЖЕ ИЗВЕСТНО О ПОЛЬЗОВАТЕЛЕ:\n${JSON.stringify(knownData, null, 2)}`
+    : ''
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 400,
-    system: systemPrompt,
-    messages
+    max_tokens: 700,
+    system: SYSTEM_PROMPT + knownStr,
+    messages: [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: userMessage }
+    ]
   })
 
-  const text = response.content[0].text
+  const raw = response.content[0].text
 
-  // Check if phase is complete
-  const phaseMatch = text.match(/PHASE_COMPLETE:({.+})/s)
-  let phaseData = {}
-  let cleanText = text
+  // Parse DATA block (single line JSON after DATA:)
+  const dataMatch = raw.match(/DATA:(\{[^\n]+\})/)
+  const isDone = /\nDONE/.test(raw)
+  const personaMatch = raw.match(/PERSONA_REF:([\s\S]+)$/)
 
-  if (phaseMatch) {
-    // Always strip PHASE_COMPLETE from visible text
-    cleanText = text.replace(/PHASE_COMPLETE:.+/s, '').trim()
+  // Strip markers from user-visible text
+  const cleanText = raw
+    .replace(/\nDATA:\{[^\n]+\}/, '')
+    .replace(/\nDONE/, '')
+    .replace(/\nPERSONA_REF:[\s\S]+$/, '')
+    .trim()
+
+  // Merge newly extracted data
+  let newData = { ...knownData }
+  if (dataMatch) {
     try {
-      phaseData = JSON.parse(phaseMatch[1])
+      const extracted = JSON.parse(dataMatch[1])
+      newData = { ...knownData, ...extracted }
     } catch (e) {
-      // continue without extracted data
+      console.error('DATA parse error:', dataMatch[1], e.message)
     }
   }
 
-  // Guarantee response ends with a question
-  const hasQuestion = /\?[^а-яёa-z]*$/i.test(cleanText.trimEnd())
-  if (phaseMatch) {
-    // Phase transition — show what was captured, then open next phase
-    const nextPhaseConfig = PHASES[phase + 1]
-    const summary = buildPhaseSummary(phaseData)
-    cleanText = cleanText.trimEnd()
-    if (summary) cleanText += '\n\n' + summary
-    if (nextPhaseConfig && phase + 1 <= maxPhase) cleanText += '\n\n' + nextPhaseConfig.questions[0]
-  } else if (!hasQuestion) {
-    // Mid-phase — find next unasked question
-    const asked = history
-      .filter(h => h.role === 'assistant')
-      .map(h => h.content)
-      .join('\n')
-    const nextQ = phaseConfig.questions.find(q => !asked.includes(q.slice(0, 30)))
-    if (nextQ) cleanText = cleanText.trimEnd() + '\n\n' + nextQ
-  }
-
-  // Save conversation
+  // Save conversation turn
   await db.saveConversation(userId, 'user', userMessage)
   await db.saveConversation(userId, 'assistant', cleanText)
 
-  // Update profile with phase data
-  const currentData = profile?.onboarding_data || {}
-  const updatedData = { ...currentData, ...phaseData }
+  if (isDone && personaMatch) {
+    const personaRef = personaMatch[1].trim()
+    await finalizeProfile(userId, newData, personaRef)
+    return { done: false, finalPhase: true, message: cleanText, personaRef }
+  }
 
-  const shouldAdvance = !!phaseMatch
-
+  // Save partial progress
   await db.upsertProfile(userId, {
-    onboarding_phase: shouldAdvance ? phase : (profile?.onboarding_phase || 0),
-    onboarding_data: updatedData
+    onboarding_phase: 1,
+    onboarding_data: newData
   })
 
-  // Check if all phases done
-  const newPhase = shouldAdvance ? phase : (profile?.onboarding_phase || 0)
-  if (newPhase >= maxPhase && shouldAdvance) {
-    // Finalize profile
-    await finalizeProfile(userId, updatedData)
-    return {
-      done: false,
-      phaseComplete: true,
-      finalPhase: true,
-      message: cleanText
-    }
-  }
-
-  return {
-    done: false,
-    phaseComplete: shouldAdvance,
-    message: cleanText
-  }
+  return { done: false, message: cleanText }
 }
 
-// ─── Finalize profile after onboarding ───────────────────────────────────────
+// ─── Finalize profile ─────────────────────────────────────────────────────────
 
-async function finalizeProfile(userId, onboardingData) {
-  const data = JSON.stringify(onboardingData, null, 2)
-
-  // Request 1 — public profile fields
-  const publicPrompt = `На основе данных онбординга создай публичный профиль пользователя.
-
-Данные онбординга:
-${data}
-
-Верни ТОЛЬКО JSON (без пояснений):
-{
-  "goal_type": "romantic|business|mentor",
-  "archetype_tags": ["tag1", "tag2"],
-  "decision_style": "intuitive|analytical|mixed",
-  "communication_directness": 0.1-1.0,
-  "openness_score": 0.1-1.0,
-  "hard_filters": {},
-  "style_vector": {"directness": 0.1-1.0, "pace": 0.1-1.0, "structure": 0.1-1.0},
-  "showcase_public": "2-3 предложения о человеке — характер, стиль, что ищет. Без имён и интимных деталей.",
-  "showcase_tags": ["tag1", "tag2", "tag3"]
-}`
-
-  // Request 2 — private profile fields
-  const privatePrompt = `На основе данных онбординга извлеки приватные параметры пользователя.
-
-Данные онбординга:
-${data}
-
-Верни ТОЛЬКО JSON (без пояснений):
-{
-  "gender": "male|female|non-binary|other|null",
-  "age": число_или_null,
-  "physical_self": {"height": число_или_null, "weight": число_или_null, "body_type": "строка_или_null"},
-  "orientation": "heterosexual|homosexual|bisexual|other|null",
-  "relationship_format": "serious|casual|open|poly|other|null",
-  "partner_gender_preference": "male|female|any|null",
-  "physical_preferences": {"age_min": число_или_null, "age_max": число_или_null, "height_min": число_или_null, "height_max": число_или_null},
-  "intimate_tags": [],
-  "intimate_dealbreakers": []
-}`
-
-  const [publicRes, privateRes] = await Promise.all([
-    client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 600,
-      messages: [{ role: 'user', content: publicPrompt }]
-    }),
-    client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 400,
-      messages: [{ role: 'user', content: privatePrompt }]
-    })
-  ])
-
-  let publicData = {}
-  let privateData = {}
-
-  try {
-    const text = publicRes.content[0].text
-    publicData = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || text)
-  } catch (e) {
-    console.error('Failed to parse public profile:', publicRes.content[0].text)
+async function finalizeProfile(userId, data, personaRef) {
+  const fields = {
+    goal_type:                data.goal_type,
+    archetype_tags:           data.archetype_tags,
+    decision_style:           data.decision_style,
+    communication_directness: data.communication_directness,
+    openness_score:           data.openness_score,
+    hard_filters:             data.hard_filters             ?? {},
+    style_vector:             data.style_vector             ?? {},
+    showcase_public:          data.showcase_public,
+    showcase_tags:            data.showcase_tags,
+    gender:                   data.gender,
+    age:                      data.age,
+    physical_self:            data.physical_self            ?? {},
+    orientation:              data.orientation,
+    relationship_format:      data.relationship_format,
+    partner_gender_preference:data.partner_gender_preference,
+    physical_preferences:     data.physical_preferences     ?? {},
+    intimate_tags:            data.intimate_tags,
+    intimate_dealbreakers:    data.intimate_dealbreakers,
+    persona_ref:              personaRef,
+    onboarding_phase:         8,
+    onboarding_data:          data
   }
 
-  try {
-    const text = privateRes.content[0].text
-    privateData = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || text)
-  } catch (e) {
-    console.error('Failed to parse private profile:', privateRes.content[0].text)
-  }
-
-  await db.upsertProfile(userId, {
-    ...publicData,
-    ...privateData,
-    onboarding_phase: 8
-  })
+  // Drop undefined — let DB keep existing values
+  const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
+  await db.upsertProfile(userId, clean)
 }

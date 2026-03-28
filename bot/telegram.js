@@ -1,9 +1,8 @@
 import { Bot, InlineKeyboard } from 'grammy'
 import { db } from '../db/postgres.js'
 import { conductOnboarding } from '../agent/onboarding.js'
-import { scheduleMatching, scheduleDialogueTurn } from '../queue/queues.js'
-import { startDialogue, expressHandoffIntent } from '../agent/proxy.js'
-import { updateProfileEmbedding } from '../agent/matching.js'
+import { scheduleMatching } from '../queue/queues.js'
+import { updateProfileEmbedding, agentAnswerQuestion } from '../agent/matching.js'
 import 'dotenv/config'
 
 let botInstance = null
@@ -30,29 +29,11 @@ export function createBot() {
       await db.upsertProfile(user.id, { onboarding_phase: 0 })
       await ctx.reply(
         `👋 Привет! Я AgentNet — сеть агентов для поиска людей и возможностей.\n\n` +
-        `Сначала я хочу немного узнать тебя — это займёт 10-15 минут. ` +
-        `Отвечай свободно, как в разговоре с другом.\n\n` +
-        `Итак — что привело тебя сюда?`
+        `Расскажи о себе и о том кого ищешь — свободно, подробно, своими словами. ` +
+        `Чем больше расскажешь сразу, тем меньше я буду переспрашивать.`
       )
     } else if (profile.onboarding_phase < 8) {
-      await ctx.reply(`С возвращением! Продолжим где остановились.`)
-      try {
-        const result = await conductOnboarding(user.id, 'продолжи интервью, задай следующий вопрос')
-        if (result.message) await ctx.reply(result.message)
-        if (result.finalPhase) {
-          const freshProfile = await db.getProfile(user.id)
-          await updateProfileEmbedding(user.id, freshProfile)
-          const kb = new InlineKeyboard()
-            .text('✅ Всё верно', `confirm_profile:${user.id}`)
-            .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
-          await ctx.reply(
-            `✅ <b>Профиль готов!</b>\n\nВот как агент тебя описал:\n\n${esc(freshProfile?.showcase_public)}\n\nВсё верно?`,
-            { parse_mode: 'HTML', reply_markup: kb }
-          )
-        }
-      } catch (e) {
-        console.error('Resume onboarding error:', e)
-      }
+      await ctx.reply(`С возвращением! Продолжим.`)
     } else {
       await ctx.reply(
         `С возвращением! Твой профиль готов.\n\n` +
@@ -88,37 +69,27 @@ export function createBot() {
   if (process.env.TEST_MODE === 'true') {
     bot.command('skip', async (ctx) => {
       const user = await db.upsertUser(ctx.from.id, ctx.from.username)
-      const targetPhase = parseInt(ctx.match?.trim() || '6') - 1
 
-      const fakeData = {
-        goal_type: 'романтические отношения',
-        urgency_signal: 'давнее желание',
-        self_awareness_level: 'высокий',
-        archetype_tags: ['creative', 'introvert'],
+      // Seed partial data so Claude asks only for missing fields (romantic by default)
+      const partialData = {
+        goal_type: 'romantic',
+        archetype_tags: ['creative', 'introvert', 'deep-thinker'],
         decision_style: 'intuitive',
-        domain_context: 'tech',
-        desired_archetype: 'открытый, глубокий',
-        implicit_expectations: 'честность',
-        complementarity_vs_similarity: 'дополнение',
-        hard_filters: {},
-        geographic_constraints: 'тот же город',
-        value_dealbreakers: 'ложь',
         communication_directness: 0.75,
-        contact_frequency: 'несколько раз в неделю',
         openness_score: 0.8,
-        conflict_response: 'спокойно выясняю',
-        attachment_signal: 'умеренная тревога',
-        self_reflection_capacity: 'высокая'
+        hard_filters: {},
+        style_vector: { directness: 0.75, pace: 0.4, structure: 0.3 },
+        showcase_tags: ['depth', 'creative']
       }
 
       await db.upsertProfile(user.id, {
-        onboarding_phase: targetPhase,
-        onboarding_data: fakeData
+        onboarding_phase: 1,
+        onboarding_data: partialData
       })
 
       await ctx.reply(
-        `⏭ *Перемотка к фазе ${targetPhase + 1}*\n\nТеперь напиши что-нибудь — бот продолжит с этой фазы.`,
-        { parse_mode: 'Markdown' }
+        `⏭ <b>Пропуск</b>\n\nБазовые данные заполнены. Напиши что-нибудь — агент запросит только недостающее (физические параметры, интимные предпочтения).`,
+        { parse_mode: 'HTML' }
       )
     })
 
@@ -189,10 +160,7 @@ export function createBot() {
       await scheduleMatching(user.id)
 
       await ctx.reply(
-        `🧪 *Тестовый профиль создан!*\n\n` +
-        `Тип: *${goalType}*\n` +
-        `Витрина: ${esc(profiles[goalType].showcase_public)}\n\n` +
-        `Поиск запущен. /pings — входящие пинги`,
+        `🧪 <b>Тестовый профиль создан!</b>\n\nТип: ${goalType}\nПоиск запущен. /matches — мои матчи`,
         { parse_mode: 'HTML' }
       )
     })
@@ -203,180 +171,35 @@ export function createBot() {
   bot.command('found', async (ctx) => {
     const user = await db.getUserByTelegramId(ctx.from.id)
     if (!user) return ctx.reply('Сначала напиши /start')
-
     await db.setMatchingActive(user.id, false)
-    await ctx.reply(
-      '🎉 Поиск остановлен.\n\n' +
-      'Рады что ты нашёл то что искал. Удачи!\n\n' +
-      'Если захочешь возобновить поиск — напиши /start.'
-    )
+    await ctx.reply('🎉 Поиск остановлен. Удачи!\n\nЕсли захочешь возобновить — /start.')
   })
 
-  // ─── /pings ────────────────────────────────────────────────────────────────
+  // ─── /matches ──────────────────────────────────────────────────────────────
 
-  bot.command('pings', async (ctx) => {
+  bot.command('matches', async (ctx) => {
     const user = await db.getUserByTelegramId(ctx.from.id)
     if (!user) return ctx.reply('Сначала напиши /start')
 
-    const pings = await db.getPendingPings(user.id)
+    const matches = await db.getMatchesForUser(user.id)
+    if (matches.length === 0) return ctx.reply('Пока нет матчей. Поиск работает в фоне.')
 
-    if (pings.length === 0) {
-      return ctx.reply('📭 Входящих пингов пока нет.')
-    }
+    for (const m of matches.slice(0, 5)) {
+      const isA = String(m.user_a_id) === String(user.id)
+      const score = Math.round(m.score * 100)
+      const status = m.status === 'mutual' ? '🎉 Взаимный интерес' : isA ? '🔍 Найден тобой' : '👋 Тебя нашли'
 
-    for (const ping of pings.slice(0, 5)) {
       const kb = new InlineKeyboard()
-        .text('✅ Принять', `accept:${ping.id}`)
-        .text('❌ Отклонить', `reject:${ping.id}`)
+        .text('💬 Показать диалог', `show_conv:${m.id}`)
+        .row()
+        .text('🤝 Хочу познакомиться', `want_match:${m.id}`)
+        .text('❌ Пропустить', `skip_match:${m.id}`)
 
       await ctx.reply(
-        `📨 <b>Пинг от агента</b>\n\n` +
-        `<i>Гипотеза: ${esc(ping.hypothesis)}</i>\n\n` +
-        `${esc(ping.ping_text)}`,
+        `${status} · <b>${score}%</b>\n\n<i>${esc(m.hypothesis)}</i>`,
         { parse_mode: 'HTML', reply_markup: kb }
       )
     }
-  })
-
-  // ─── /dialogue ─────────────────────────────────────────────────────────────
-
-  bot.command('dialogue', async (ctx) => {
-    const user = await db.getUserByTelegramId(ctx.from.id)
-    if (!user) return ctx.reply('Сначала напиши /start')
-
-    const dialogue = await db.getActiveDialogue(user.id)
-    if (!dialogue) {
-      return ctx.reply('Активных диалогов нет. Прими пинг чтобы начать.')
-    }
-
-    const transcript = dialogue.transcript || []
-    const last = transcript.slice(-4)
-
-    const text = last.map(t =>
-      `${t.from === 'user_a' ? '👤 A' : '👤 B'}: ${t.processed || t.content}`
-    ).join('\n\n')
-
-    const kb = new InlineKeyboard()
-      .text('↩️ Ответить', `reply:${dialogue.id}`)
-      .text('🤝 Хочу контакт', `intent:${dialogue.id}`)
-
-    await ctx.reply(
-      `💬 *Диалог* (ход ${dialogue.turns}/${process.env.DIALOGUE_MAX_TURNS || 8})\n\n${text}`,
-      { parse_mode: 'Markdown', reply_markup: kb }
-    )
-  })
-
-  // ─── Callback handlers ─────────────────────────────────────────────────────
-
-  bot.callbackQuery(/^accept:(.+)$/, async (ctx) => {
-    const pingId = ctx.match[1]
-    const user = await db.getUserByTelegramId(ctx.from.id)
-    if (!user) return
-
-    const dialogue = await startDialogue(pingId, user.id)
-    if (!dialogue) {
-      return ctx.answerCallbackQuery('Ошибка: пинг не найден')
-    }
-
-    await ctx.editMessageText(
-      ctx.msg.text + '\n\n✅ _Принято — диалог начат_',
-      { parse_mode: 'Markdown' }
-    )
-
-    // Get the opening ping text to show
-    const { rows } = await db.query(
-      'SELECT ping_text FROM pings WHERE id = $1',
-      [pingId]
-    )
-    const ping = rows[0]
-
-    await ctx.reply(
-      `🤝 Диалог начат! Агент-посредник будет передавать сообщения между вами.\n\n` +
-      `*Первое сообщение от агента A:*\n${ping?.ping_text || ''}`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: new InlineKeyboard()
-          .text('↩️ Ответить', `reply:${dialogue.id}`)
-          .text('🤝 Хочу контакт', `intent:${dialogue.id}`)
-      }
-    )
-
-    // Notify sender
-    const pingData = await db.query(
-      'SELECT from_user_id FROM pings WHERE id = $1',
-      [pingId]
-    ).then(r => r.rows[0])
-
-    if (pingData) {
-      const sender = await db.query(
-        'SELECT telegram_id FROM users WHERE id = $1',
-        [pingData.from_user_id]
-      ).then(r => r.rows[0])
-
-      if (sender) {
-        await ctx.api.sendMessage(
-          sender.telegram_id,
-          `✅ *Твой пинг принят!* Диалог начат.\n\nНапиши /dialogue чтобы открыть.`,
-          { parse_mode: 'Markdown' }
-        )
-      }
-    }
-
-    await ctx.answerCallbackQuery('Диалог начат!')
-  })
-
-  bot.callbackQuery(/^reject:(.+)$/, async (ctx) => {
-    const pingId = ctx.match[1]
-    await db.updatePingStatus(pingId, 'rejected')
-    await ctx.editMessageText(ctx.msg.text + '\n\n❌ _Отклонено_', { parse_mode: 'Markdown' })
-    await ctx.answerCallbackQuery('Пинг отклонён')
-  })
-
-  bot.callbackQuery(/^intent:(.+)$/, async (ctx) => {
-    const dialogueId = ctx.match[1]
-    const user = await db.getUserByTelegramId(ctx.from.id)
-    if (!user) return
-
-    const result = await expressHandoffIntent(dialogueId, user.id)
-
-    if (result.status === 'handoff') {
-      // Get both users' contacts
-      const dialogue = result.dialogue
-      const userA = await db.query(
-        'SELECT telegram_id, username FROM users WHERE id = $1',
-        [dialogue.user_a_id]
-      ).then(r => r.rows[0])
-      const userB = await db.query(
-        'SELECT telegram_id, username FROM users WHERE id = $1',
-        [dialogue.user_b_id]
-      ).then(r => r.rows[0])
-
-      const msgA = `🎉 *Взаимное согласие!*\n\nВы оба хотите прямого контакта.\n\n` +
-        `Telegram: @${userB.username || 'пользователь'}\n` +
-        `ID: ${userB.telegram_id}`
-
-      const msgB = `🎉 *Взаимное согласие!*\n\nВы оба хотите прямого контакта.\n\n` +
-        `Telegram: @${userA.username || 'пользователь'}\n` +
-        `ID: ${userA.telegram_id}`
-
-      await ctx.api.sendMessage(userA.telegram_id, msgA, { parse_mode: 'Markdown' })
-      await ctx.api.sendMessage(userB.telegram_id, msgB, { parse_mode: 'Markdown' })
-      await ctx.answerCallbackQuery('🎉 Хэндофф выполнен!')
-    } else {
-      await ctx.reply(result.message)
-      await ctx.answerCallbackQuery('Намерение зафиксировано')
-    }
-  })
-
-  bot.callbackQuery(/^reply:(.+)$/, async (ctx) => {
-    const dialogueId = ctx.match[1]
-    await ctx.reply(
-      'Напиши своё сообщение — я передам его через агента-посредника:\n\n' +
-      `_Формат: просто напиши сообщение в чат. Отправь /dialogue чтобы вернуться к просмотру._`,
-      { parse_mode: 'Markdown' }
-    )
-    // Store pending reply context in session (simplified — use Redis in prod)
-    await ctx.answerCallbackQuery('Пиши сообщение!')
   })
 
   // ─── /restart ──────────────────────────────────────────────────────────────
@@ -390,11 +213,98 @@ export function createBot() {
       .text('❌ Отмена', 'cancel_restart')
 
     await ctx.reply(
-      `⚠️ *Начать заново?*\n\n` +
-      `Весь профиль и история интервью будут удалены. Пинги и диалоги сохранятся.\n\n` +
-      `Ты уверен?`,
-      { parse_mode: 'Markdown', reply_markup: kb }
+      `⚠️ <b>Начать заново?</b>\n\nПрофиль и история будут удалены.\n\nУверен?`,
+      { parse_mode: 'HTML', reply_markup: kb }
     )
+  })
+
+  // ─── Callback: show agent conversation ─────────────────────────────────────
+
+  bot.callbackQuery(/^show_conv:(.+)$/, async (ctx) => {
+    const matchId = ctx.match[1]
+    const match = await db.getMatch(matchId)
+    if (!match) return ctx.answerCallbackQuery('Матч не найден')
+
+    const conv = match.conversation || []
+    const lines = conv.map(t => `<b>${t.from}:</b> ${esc(t.text)}`).join('\n\n')
+
+    const messages = await db.getMatchMessages(matchId)
+    const msgLines = messages.map(m => {
+      const label = m.sender === 'user_a' ? '🧑 Ты' : m.sender === 'user_b' ? '🧑 Они' : '🤖 Агент'
+      return `${label}: ${esc(m.content)}`
+    }).join('\n\n')
+
+    const kb = new InlineKeyboard()
+      .text('❓ Задать вопрос агенту', `ask_q:${matchId}`)
+      .row()
+      .text('🤝 Хочу познакомиться', `want_match:${matchId}`)
+
+    await ctx.reply(
+      `💬 <b>Диалог агентов</b>\n\n${lines || '—'}` +
+      (msgLines ? `\n\n<b>Переписка:</b>\n${msgLines}` : ''),
+      { parse_mode: 'HTML', reply_markup: kb }
+    )
+    await ctx.answerCallbackQuery()
+  })
+
+  // ─── Callback: want to match ───────────────────────────────────────────────
+
+  bot.callbackQuery(/^want_match:(.+)$/, async (ctx) => {
+    const matchId = ctx.match[1]
+    const user = await db.getUserByTelegramId(ctx.from.id)
+    if (!user) return ctx.answerCallbackQuery()
+
+    const result = await db.setMatchIntent(matchId, user.id)
+    const match = await db.getMatch(matchId)
+
+    if (result === 'mutual') {
+      // Exchange contacts
+      const userA = await db.query('SELECT telegram_id, username FROM users WHERE id = $1', [match.user_a_id]).then(r => r.rows[0])
+      const userB = await db.query('SELECT telegram_id, username FROM users WHERE id = $1', [match.user_b_id]).then(r => r.rows[0])
+
+      const msgA = `🎉 <b>Взаимный интерес!</b>\n\nTelegram: @${esc(userB.username || '—')}\nID: ${userB.telegram_id}`
+      const msgB = `🎉 <b>Взаимный интерес!</b>\n\nTelegram: @${esc(userA.username || '—')}\nID: ${userA.telegram_id}`
+
+      await ctx.api.sendMessage(userA.telegram_id, msgA, { parse_mode: 'HTML' })
+      await ctx.api.sendMessage(userB.telegram_id, msgB, { parse_mode: 'HTML' })
+      await ctx.answerCallbackQuery('🎉 Контакт обменян!')
+    } else {
+      // Notify the other side they were chosen
+      const isA = String(match.user_a_id) === String(user.id)
+      const otherTelegramId = isA ? match.user_b_telegram : match.user_a_telegram
+
+      if (otherTelegramId && !match.notified_b) {
+        await db.markMatchNotifiedB(matchId)
+        await ctx.api.sendMessage(
+          otherTelegramId,
+          `👋 Тебя выбрали как потенциальный матч.\n\n/matches — посмотреть`,
+        )
+      }
+
+      await ctx.editMessageText(ctx.msg.text + '\n\n⏳ Ждём ответа...', { parse_mode: 'HTML' })
+      await ctx.answerCallbackQuery('Намерение зафиксировано')
+    }
+  })
+
+  // ─── Callback: skip match ──────────────────────────────────────────────────
+
+  bot.callbackQuery(/^skip_match:(.+)$/, async (ctx) => {
+    const matchId = ctx.match[1]
+    await db.query(`UPDATE matches SET status = 'closed', updated_at = NOW() WHERE id = $1`, [matchId])
+    await ctx.editMessageText(ctx.msg.text + '\n\n❌ Пропущен', { parse_mode: 'HTML' })
+    await ctx.answerCallbackQuery()
+  })
+
+  // ─── Callback: ask question ────────────────────────────────────────────────
+
+  bot.callbackQuery(/^ask_q:(.+)$/, async (ctx) => {
+    const matchId = ctx.match[1]
+    const user = await db.getUserByTelegramId(ctx.from.id)
+    if (!user) return ctx.answerCallbackQuery()
+
+    await db.setPendingAction(user.id, `ask_question:${matchId}`)
+    await ctx.reply('Напиши вопрос — агент попробует ответить сам или передаст человеку.')
+    await ctx.answerCallbackQuery()
   })
 
   // ─── Profile confirmation callbacks ────────────────────────────────────────
@@ -405,43 +315,25 @@ export function createBot() {
     const user = await db.getUserByTelegramId(ctx.from.id)
     if (user) await scheduleMatching(user.id)
 
-    await ctx.editMessageText(
-      ctx.msg.text + '\n\n✅ _Подтверждено — запускаю поиск!_',
-      { parse_mode: 'Markdown' }
-    )
-    await ctx.reply(
-      `🔍 Поиск запущен. Если найду подходящих — пришлю пинги.\n\n` +
-      `/pings — входящие пинги\n/profile — твой профиль\n/found — нашёл то что искал`
-    )
+    await ctx.editMessageText(ctx.msg.text + '\n\n✅ Подтверждено — запускаю поиск!', { parse_mode: 'HTML' })
+    await ctx.reply(`🔍 Поиск запущен.\n\n/matches — найденные матчи\n/profile — твой профиль\n/found — нашёл что искал`)
     await ctx.answerCallbackQuery()
   })
 
   bot.callbackQuery(/^edit_showcase:(.+)$/, async (ctx) => {
     const userId = ctx.match[1]
     await db.setPendingAction(userId, 'showcase_edit')
-
-    await ctx.editMessageText(
-      ctx.msg.text + '\n\n✏️ _Жду новый текст..._',
-      { parse_mode: 'Markdown' }
-    )
-    await ctx.reply(
-      `Напиши новое описание (2-3 предложения).\n\n` +
-      `_Это то что другие агенты увидят при подборе — без личных данных и интимных деталей._`,
-      { parse_mode: 'Markdown' }
-    )
+    await ctx.editMessageText(ctx.msg.text + '\n\n✏️ Жду новый текст...', { parse_mode: 'HTML' })
+    await ctx.reply('Напиши как агент должен говорить от твоего имени (3-5 предложений от первого лица).')
     await ctx.answerCallbackQuery()
   })
 
   bot.callbackQuery('confirm_restart', async (ctx) => {
     const user = await db.getUserByTelegramId(ctx.from.id)
     if (!user) return ctx.answerCallbackQuery()
-
     await db.resetProfile(user.id)
     await ctx.editMessageText('♻️ Профиль сброшен.')
-    await ctx.reply(
-      `👋 Начнём заново!\n\n` +
-      `Итак — что привело тебя сюда?`
-    )
+    await ctx.reply('👋 Начнём заново!\n\nРасскажи о себе и о том кого ищешь.')
     await ctx.answerCallbackQuery()
   })
 
@@ -454,36 +346,99 @@ export function createBot() {
 
   bot.on('message:text', async (ctx) => {
     const user = await db.upsertUser(ctx.from.id, ctx.from.username)
-
-    // Handle pending showcase edit (persisted in DB — survives restarts)
     const profileCheck = await db.getProfile(user.id)
-    if (profileCheck?.pending_action === 'showcase_edit') {
+    const pendingAction = profileCheck?.pending_action
+
+    // ── Pending: persona edit ──
+    if (pendingAction === 'showcase_edit') {
       await db.setPendingAction(user.id, null)
-      await db.confirmProfile(user.id, ctx.message.text)
+      await db.upsertProfile(user.id, { persona_ref: ctx.message.text })
+      await db.confirmProfile(user.id)
       await scheduleMatching(user.id)
-      await ctx.reply(
-        `✅ Описание обновлено:\n\n${esc(ctx.message.text)}\n\nЗапускаю поиск!`
+      await ctx.reply(`✅ Описание обновлено. Запускаю поиск!`)
+      return
+    }
+
+    // ── Pending: user asking a question about a match ──
+    if (pendingAction?.startsWith('ask_question:')) {
+      const matchId = pendingAction.split(':')[1]
+      await db.setPendingAction(user.id, null)
+
+      const match = await db.getMatch(matchId)
+      if (!match) return ctx.reply('Матч не найден.')
+
+      await db.addMatchMessage(matchId, 'user_a', ctx.message.text, false)
+
+      const targetPersona = match.persona_b || match.showcase_b || ''
+      const { routed, answer } = await agentAnswerQuestion(ctx.message.text, targetPersona)
+
+      if (!routed) {
+        await db.addMatchMessage(matchId, 'agent_b', answer, false)
+        const kb = new InlineKeyboard()
+          .text('❓ Ещё вопрос', `ask_q:${matchId}`)
+          .text('🤝 Хочу познакомиться', `want_match:${matchId}`)
+        await ctx.reply(`🤖 <b>Агент отвечает:</b>\n\n${esc(answer)}`, { parse_mode: 'HTML', reply_markup: kb })
+      } else {
+        // Route to real user B
+        await db.addMatchMessage(matchId, 'user_a', ctx.message.text, true)
+        const otherTelegramId = String(match.user_a_id) === String(user.id)
+          ? match.user_b_telegram
+          : match.user_a_telegram
+
+        await db.setPendingAction(
+          String(match.user_a_id) === String(user.id) ? match.user_b_id : match.user_a_id,
+          `answering_question:${matchId}`
+        )
+        await ctx.api.sendMessage(
+          otherTelegramId,
+          `❓ Тебя спрашивают:\n\n<i>${esc(ctx.message.text)}</i>\n\nПросто ответь — я передам.`,
+          { parse_mode: 'HTML' }
+        )
+        await ctx.reply('⏳ Вопрос передан человеку, ждём ответа.')
+      }
+      return
+    }
+
+    // ── Pending: user B answering a routed question ──
+    if (pendingAction?.startsWith('answering_question:')) {
+      const matchId = pendingAction.split(':')[1]
+      await db.setPendingAction(user.id, null)
+
+      await db.addMatchMessage(matchId, 'user_b', ctx.message.text, false)
+      const match = await db.getMatch(matchId)
+      const otherTelegramId = String(match.user_b_id) === String(user.id)
+        ? match.user_a_telegram
+        : match.user_b_telegram
+
+      const kb = new InlineKeyboard()
+        .text('❓ Ещё вопрос', `ask_q:${matchId}`)
+        .text('🤝 Хочу познакомиться', `want_match:${matchId}`)
+
+      await ctx.api.sendMessage(
+        otherTelegramId,
+        `💬 <b>Ответ:</b>\n\n${esc(ctx.message.text)}`,
+        { parse_mode: 'HTML', reply_markup: kb }
       )
+      await ctx.reply('✅ Ответ передан.')
       return
     }
 
     const profile = await db.getProfile(user.id)
 
-    // Still in onboarding
+    // ── Onboarding ──
     if (!profile || profile.onboarding_phase < 8) {
       try {
         const result = await conductOnboarding(user.id, ctx.message.text)
 
         if (result.done) {
-          // Already finalized but not confirmed — show showcase again
           const freshProfile = await db.getProfile(user.id)
           if (!freshProfile?.profile_confirmed) {
             const kb = new InlineKeyboard()
               .text('✅ Всё верно', `confirm_profile:${user.id}`)
-              .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
+              .text('✏️ Изменить', `edit_showcase:${user.id}`)
             await ctx.reply(
-              `Вот твоё описание — подтверди чтобы начать поиск:\n\n${esc(freshProfile?.showcase_public)}`,
-              { reply_markup: kb }
+              `Вот как агент будет говорить от твоего имени:\n\n<i>${esc(freshProfile?.persona_ref)}</i>\n\nПодтверди или отредактируй.`,
+              { parse_mode: 'HTML', reply_markup: kb }
             )
           }
           return
@@ -492,16 +447,12 @@ export function createBot() {
         if (result.message) await ctx.reply(result.message)
 
         if (result.finalPhase) {
-          const freshProfile = await db.getProfile(user.id)
-          await updateProfileEmbedding(user.id, freshProfile)
+          const personaRef = result.personaRef || (await db.getProfile(user.id))?.persona_ref
           const kb = new InlineKeyboard()
             .text('✅ Всё верно', `confirm_profile:${user.id}`)
-            .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
+            .text('✏️ Изменить', `edit_showcase:${user.id}`)
           await ctx.reply(
-            `✅ <b>Профиль готов!</b>\n\n` +
-            `Вот как агент тебя описал — это увидят другие агенты при подборе:\n\n` +
-            `${esc(freshProfile?.showcase_public)}\n\n` +
-            `Всё верно?`,
+            `✅ <b>Профиль собран!</b>\n\nВот как агент будет говорить от твоего имени:\n\n<i>${esc(personaRef)}</i>\n\nПодтверди или отредактируй.`,
             { parse_mode: 'HTML', reply_markup: kb }
           )
         }
@@ -512,21 +463,9 @@ export function createBot() {
       return
     }
 
-    // Check for active dialogue — route message through proxy
-    const activeDialogue = await db.getActiveDialogue(user.id)
-    if (activeDialogue) {
-      await ctx.reply('⏳ Передаю через агента...')
-      await scheduleDialogueTurn(activeDialogue.id, user.id, ctx.message.text)
-      return
-    }
-
-    // General assistant mode
+    // ── Default ──
     await ctx.reply(
-      `Не понял команду. Используй:\n` +
-      `/pings — входящие пинги\n` +
-      `/dialogue — активный диалог\n` +
-      `/profile — твой профиль\n` +
-      `/found — нашёл то что искал`
+      `Используй:\n/matches — найденные матчи\n/profile — твой профиль\n/found — нашёл что искал\n/restart — начать заново`
     )
   })
 

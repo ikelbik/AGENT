@@ -156,5 +156,36 @@ DO $$ BEGIN
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_tags TEXT[];
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_dealbreakers TEXT[];
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS partner_gender_preference TEXT;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS persona_ref TEXT;
 EXCEPTION WHEN others THEN NULL;
 END $$;
+
+-- ─── Matches (replaces pings) ─────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS matches (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_a_id     UUID REFERENCES users(id) ON DELETE CASCADE,  -- who initiated
+  user_b_id     UUID REFERENCES users(id) ON DELETE CASCADE,  -- candidate
+  score         FLOAT,
+  hypothesis    TEXT,
+  conversation  JSONB DEFAULT '[]',   -- agent-to-agent transcript [{from,text}]
+  status        TEXT DEFAULT 'new',   -- new | active | mutual | closed
+  intent_a      BOOLEAN DEFAULT FALSE,
+  intent_b      BOOLEAN DEFAULT FALSE,
+  notified_b    BOOLEAN DEFAULT FALSE, -- true when B was told about this match
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_a_id, user_b_id)
+);
+
+CREATE TABLE IF NOT EXISTS match_messages (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  match_id   UUID REFERENCES matches(id) ON DELETE CASCADE,
+  sender     TEXT,   -- 'user_a' | 'agent_b' | 'user_b'
+  content    TEXT,
+  routed     BOOLEAN DEFAULT FALSE,  -- true if question was routed to real user
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS matches_user_a_idx ON matches(user_a_id, status);
+CREATE INDEX IF NOT EXISTS matches_user_b_idx ON matches(user_b_id, status);

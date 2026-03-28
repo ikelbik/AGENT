@@ -28,26 +28,20 @@ new Worker('matching', async (job) => {
     return
   }
 
-  // Notify recipients about incoming pings
-  for (const pingResult of results.pings) {
-    const recipient = await db.getUserByTelegramId(pingResult.recipientId)
-    if (recipient) {
-      // Get sender info
-      const user = await db.query(
-        'SELECT * FROM users WHERE id = $1',
-        [userId]
-      ).then(r => r.rows[0])
-
+  // Notify user A about new matches
+  if (results.matches.length > 0) {
+    const initiator = await db.query('SELECT telegram_id FROM users WHERE id = $1', [userId]).then(r => r.rows[0])
+    if (initiator) {
       const b = await getBot()
       await b.api.sendMessage(
-        recipient.telegram_id,
-        `📨 *Новый пинг!*\n\n${pingResult.hypothesis}\n\nНапиши /pings чтобы посмотреть`,
-        { parse_mode: 'Markdown' }
+        initiator.telegram_id,
+        `🔍 Нашёл <b>${results.matches.length}</b> подходящих кандидатов.\n\n/matches — посмотреть`,
+        { parse_mode: 'HTML' }
       )
     }
   }
 
-  console.log(`[matching] Done: ${results.pings.length} pings, ${results.watchlist.length} watchlist`)
+  console.log(`[matching] Done for ${userId}: ${results.matches.length} matches`)
 }, { connection })
 
 // ─── Dialogue worker ──────────────────────────────────────────────────────────

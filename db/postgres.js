@@ -279,5 +279,106 @@ export const db = {
          SET score = EXCLUDED.score, reason = EXCLUDED.reason`,
       [userId, targetUserId, score, reason]
     )
+  },
+
+  // ─── Matches ────────────────────────────────────────────────────────────────
+
+  async createMatch(userAId, userBId, score, hypothesis, conversation) {
+    const { rows } = await pool.query(
+      `INSERT INTO matches (user_a_id, user_b_id, score, hypothesis, conversation)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_a_id, user_b_id) DO UPDATE
+         SET score = EXCLUDED.score, hypothesis = EXCLUDED.hypothesis,
+             conversation = EXCLUDED.conversation, updated_at = NOW()
+       RETURNING *`,
+      [userAId, userBId, score, hypothesis, JSON.stringify(conversation)]
+    )
+    return rows[0]
+  },
+
+  async getMatchesForUser(userId) {
+    const { rows } = await pool.query(
+      `SELECT m.*,
+              ua.telegram_id AS user_a_telegram, ua.username AS user_a_username,
+              ub.telegram_id AS user_b_telegram, ub.username AS user_b_username,
+              pa.persona_ref AS persona_a, pb.persona_ref AS persona_b,
+              pb.showcase_public AS showcase_b
+       FROM matches m
+       JOIN users ua ON ua.id = m.user_a_id
+       JOIN users ub ON ub.id = m.user_b_id
+       LEFT JOIN profiles pa ON pa.user_id = m.user_a_id
+       LEFT JOIN profiles pb ON pb.user_id = m.user_b_id
+       WHERE (m.user_a_id = $1 OR m.user_b_id = $1)
+         AND m.status != 'closed'
+       ORDER BY m.score DESC`,
+      [userId]
+    )
+    return rows
+  },
+
+  async getMatch(matchId) {
+    const { rows } = await pool.query(
+      `SELECT m.*,
+              ua.telegram_id AS user_a_telegram,
+              ub.telegram_id AS user_b_telegram,
+              pb.persona_ref AS persona_b, pb.showcase_public AS showcase_b
+       FROM matches m
+       JOIN users ua ON ua.id = m.user_a_id
+       JOIN users ub ON ub.id = m.user_b_id
+       LEFT JOIN profiles pb ON pb.user_id = m.user_b_id
+       WHERE m.id = $1`,
+      [matchId]
+    )
+    return rows[0] || null
+  },
+
+  async setMatchIntent(matchId, userId) {
+    const { rows } = await pool.query(
+      'SELECT user_a_id, user_b_id, intent_a, intent_b FROM matches WHERE id = $1',
+      [matchId]
+    )
+    const m = rows[0]
+    if (!m) return null
+
+    const isA = String(m.user_a_id) === String(userId)
+    const field = isA ? 'intent_a' : 'intent_b'
+    await pool.query(
+      `UPDATE matches SET ${field} = TRUE, status = 'active', updated_at = NOW() WHERE id = $1`,
+      [matchId]
+    )
+
+    const otherIntent = isA ? m.intent_b : m.intent_a
+    if (otherIntent) {
+      await pool.query(
+        `UPDATE matches SET status = 'mutual', updated_at = NOW() WHERE id = $1`,
+        [matchId]
+      )
+      return 'mutual'
+    }
+    return 'waiting'
+  },
+
+  async addMatchMessage(matchId, sender, content, routed = false) {
+    const { rows } = await pool.query(
+      `INSERT INTO match_messages (match_id, sender, content, routed)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [matchId, sender, content, routed]
+    )
+    return rows[0]
+  },
+
+  async getMatchMessages(matchId) {
+    const { rows } = await pool.query(
+      'SELECT * FROM match_messages WHERE match_id = $1 ORDER BY created_at ASC',
+      [matchId]
+    )
+    return rows
+  },
+
+  async markMatchNotifiedB(matchId) {
+    await pool.query(
+      'UPDATE matches SET notified_b = TRUE, updated_at = NOW() WHERE id = $1',
+      [matchId]
+    )
   }
 }
