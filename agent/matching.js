@@ -336,12 +336,18 @@ ${targetPersona}`,
 // ─── Run matching for a user ──────────────────────────────────────────────────
 
 export async function runMatching(userId) {
+  const log = (...args) => console.log(`[match:${userId.slice(0,8)}]`, ...args)
+
   const profile = await db.getProfile(userId)
   if (!profile || profile.onboarding_phase < 8) {
+    log('SKIP — profile incomplete, phase:', profile?.onboarding_phase)
     return { error: 'Профиль не завершён' }
   }
+  log('profile ok — goal:', profile.goal_type, '| persona:', !!profile.persona_ref)
 
   const candidates = await findCandidates(userId, profile)
+  log(`candidates after DB query: ${candidates.length}`)
+
   if (candidates.length === 0) {
     return { found: 0, matches: [] }
   }
@@ -352,18 +358,33 @@ export async function runMatching(userId) {
   for (const candidate of candidates) {
     if (results.matches.length >= MAX_PER_RUN) break
 
+    const cid = candidate.user_id?.slice(0, 8)
     const { scoring } = candidate
-    if (scoring.action === 'skip') continue
+
+    log(`→ candidate ${cid} | score=${scoring.score.toFixed(2)} action=${scoring.action}`)
+
+    if (scoring.action === 'skip') {
+      log(`  SKIP — score filter`)
+      continue
+    }
 
     const passes = await passesHardFilters(profile, candidate)
-    if (!passes) continue
+    if (!passes) {
+      log(`  SKIP — hard filters`)
+      continue
+    }
 
-    // Agent-to-agent conversation
+    log(`  running agent conversation...`)
     const conv = await agentConversation(profile, candidate)
+    log(`  conv score=${conv.score.toFixed(2)} | "${conv.hypothesis}"`)
 
-    // Combined score: 40% data-based + 60% conversation-based
     const combinedScore = scoring.score * 0.4 + conv.score * 0.6
-    if (combinedScore < 0.4) continue
+    log(`  combined=${combinedScore.toFixed(2)} (data=${scoring.score.toFixed(2)} conv=${conv.score.toFixed(2)})`)
+
+    if (combinedScore < 0.4) {
+      log(`  SKIP — combined score too low`)
+      continue
+    }
 
     const match = await db.createMatch(
       userId,
@@ -372,15 +393,17 @@ export async function runMatching(userId) {
       conv.hypothesis,
       conv.transcript || []
     )
+    log(`  MATCH created ${match.id.slice(0,8)}`)
 
     results.matches.push({
-      matchId:  match.id,
-      userBId:  candidate.user_id,
-      score:    combinedScore,
+      matchId:    match.id,
+      userBId:    candidate.user_id,
+      score:      combinedScore,
       hypothesis: conv.hypothesis
     })
   }
 
+  log(`done — ${results.matches.length} matches from ${candidates.length} candidates`)
   return results
 }
 
