@@ -28,9 +28,9 @@ export function createBot() {
         `Отвечай свободно, как в разговоре с другом.\n\n` +
         `Итак — что привело тебя сюда?`
       )
-    } else if (profile.onboarding_phase < 7) {
+    } else if (profile.onboarding_phase < 8) {
       await ctx.reply(
-        `С возвращением! Продолжим где остановились — фаза ${profile.onboarding_phase}/6.\n\n` +
+        `С возвращением! Продолжим где остановились — фаза ${profile.onboarding_phase}/7.\n\n` +
         `Продолжай рассказывать...`
       )
     } else {
@@ -48,7 +48,7 @@ export function createBot() {
     if (!user) return ctx.reply('Сначала напиши /start')
 
     const profile = await db.getProfile(user.id)
-    if (!profile || profile.onboarding_phase < 7) {
+    if (!profile || profile.onboarding_phase < 8) {
       return ctx.reply('Профиль ещё не завершён. Продолжай отвечать на вопросы.')
     }
 
@@ -251,7 +251,7 @@ export function createBot() {
     const profile = await db.getProfile(user.id)
 
     // Still in onboarding
-    if (!profile || profile.onboarding_phase < 7) {
+    if (!profile || profile.onboarding_phase < 8) {
       try {
         const result = await conductOnboarding(user.id, ctx.message.text)
 

@@ -42,6 +42,10 @@ const WEIGHTS = {
 }
 
 export function scoreCompatibility(profileA, profileB) {
+  // Hard deterministic filters before scoring
+  if (!isOrientationCompatible(profileA, profileB)) return { score: 0, dimensions: {}, action: 'skip' }
+  if (!isRelationshipFormatCompatible(profileA, profileB)) return { score: 0, dimensions: {}, action: 'skip' }
+
   const goalType = profileA.goal_type || 'business'
   const w = WEIGHTS[goalType] || WEIGHTS.business
 
@@ -69,9 +73,16 @@ export function scoreCompatibility(profileA, profileB) {
     openness: sim(profileA.openness_score, profileB.openness_score)
   }
 
-  const totalScore = Object.entries(w).reduce((sum, [dim, weight]) => {
+  let totalScore = Object.entries(w).reduce((sum, [dim, weight]) => {
     return sum + (dimensions[dim] || 0.5) * weight
   }, 0)
+
+  // For romantic goal — blend in intimate compatibility
+  if (goalType === 'romantic') {
+    const intimateScore = intimateCompatibilityScore(profileA, profileB)
+    if (intimateScore === 0) return { score: 0, dimensions, action: 'skip' }
+    totalScore = totalScore * 0.75 + intimateScore * 0.25
+  }
 
   return {
     score: totalScore,
@@ -85,9 +96,62 @@ export function scoreCompatibility(profileA, profileB) {
 function isGoalCompatible(goalA, goalB) {
   if (!goalA || !goalB) return true
   if (goalA === goalB) return true
-  // mentor is compatible with anyone
   if (goalA === 'mentor' || goalB === 'mentor') return true
   return false
+}
+
+// ─── Orientation compatibility ────────────────────────────────────────────────
+
+function isOrientationCompatible(a, b) {
+  if (!a.orientation || !b.orientation) return true
+
+  const hetA = a.orientation === 'heterosexual'
+  const hetB = b.orientation === 'heterosexual'
+  const gayA = a.orientation === 'homosexual'
+  const gayB = b.orientation === 'homosexual'
+  const biA  = a.orientation === 'bisexual'
+  const biB  = b.orientation === 'bisexual'
+
+  // Heterosexual needs opposite gender
+  if (hetA && hetB) return a.gender !== b.gender
+  // Both gay needs same gender
+  if (gayA && gayB) return a.gender === b.gender
+  // Bi is compatible with anyone
+  if (biA || biB) return true
+  // Mixed hetero+gay = incompatible
+  if ((hetA && gayB) || (gayA && hetB)) return false
+  return true
+}
+
+// ─── Relationship format compatibility ───────────────────────────────────────
+
+function isRelationshipFormatCompatible(a, b) {
+  if (!a.relationship_format || !b.relationship_format) return true
+  // serious needs serious, casual is flexible, open needs open or bi-compatible
+  const strictPairs = [['serious', 'casual'], ['serious', 'open'], ['serious', 'poly']]
+  const key = [a.relationship_format, b.relationship_format].sort().join('|')
+  return !strictPairs.some(p => p.sort().join('|') === key)
+}
+
+// ─── Intimate tags overlap score ──────────────────────────────────────────────
+
+function intimateCompatibilityScore(a, b) {
+  const tagsA = a.intimate_tags || []
+  const tagsB = b.intimate_tags || []
+  const dbA   = a.intimate_dealbreakers || []
+  const dbB   = b.intimate_dealbreakers || []
+
+  if (tagsA.length === 0 && tagsB.length === 0) return 0.7
+
+  // Check dealbreakers: if A's tag is in B's dealbreakers → incompatible
+  const aViolatesB = tagsA.some(t => dbB.includes(t))
+  const bViolatesA = tagsB.some(t => dbA.includes(t))
+  if (aViolatesB || bViolatesA) return 0.0
+
+  // Overlap score
+  const union = new Set([...tagsA, ...tagsB])
+  const intersection = tagsA.filter(t => tagsB.includes(t))
+  return union.size > 0 ? intersection.length / union.size : 0.7
 }
 
 // ─── Hard filters check via Claude ───────────────────────────────────────────
@@ -206,7 +270,7 @@ SCORE СОВМЕСТИМОСТИ: ${Math.round(scoring.score * 100)}%
 
 export async function runMatching(userId) {
   const profile = await db.getProfile(userId)
-  if (!profile || profile.onboarding_phase < 7) {
+  if (!profile || profile.onboarding_phase < 8) {
     return { error: 'Профиль не завершён' }
   }
 

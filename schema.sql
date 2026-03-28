@@ -144,5 +144,14 @@ CREATE OR REPLACE TRIGGER dialogues_updated_at
 DO $$ BEGIN
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_active BOOLEAN DEFAULT TRUE;
   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_stopped_at TIMESTAMPTZ;
+  -- Phase 7: private intimate profile
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gender TEXT;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS age INT;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS physical_self JSONB DEFAULT '{}';
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS orientation TEXT;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS relationship_format TEXT;
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS physical_preferences JSONB DEFAULT '{}';
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_tags TEXT[];
+  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_dealbreakers TEXT[];
 EXCEPTION WHEN others THEN NULL;
 END $$;

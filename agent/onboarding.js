@@ -65,18 +65,33 @@ export const PHASES = {
       'Вспомни момент когда ты сильно ошибся в человеке. Что это тебе дало?'
     ],
     outputFields: ['conflict_response', 'attachment_signal', 'self_reflection_capacity']
+  },
+  7: {
+    name: 'Приватный профиль',
+    goal: 'Собрать физические параметры, ориентацию, формат отношений и интимные предпочтения — то о чём не говорят при первом знакомстве с живым человеком',
+    questions: [
+      'Последний блок — он приватный, эти данные видит только алгоритм подбора, не другие пользователи. Расскажи немного о себе физически: пол, возраст, рост, телосложение — как считаешь нужным.',
+      'Какая ориентация у тебя? Гетеро, гей/лесби, би, что-то другое — говори как есть.',
+      'Какой формат отношений тебе ближе сейчас — серьёзные и моногамные, открытые, casual без обязательств, полиамория, или что-то своё?',
+      'Есть ли физические параметры которые принципиально важны в партнёре — внешность, возраст, телосложение, рост?',
+      'Одно из главных преимуществ этого сервиса — можно говорить честно без осуждения. Есть ли специфические желания или предпочтения в интимной сфере которые ты хотел бы чтобы разделял партнёр? Это может быть что угодно.',
+      'Есть ли в интимном плане что-то что является для тебя абсолютным нет — то с чем ты точно не готов мириться?'
+    ],
+    outputFields: ['gender', 'age', 'physical_self', 'orientation', 'relationship_format', 'physical_preferences', 'intimate_tags', 'intimate_dealbreakers'],
+    onlyForGoals: ['romantic']
   }
 }
 
 const SYSTEM_PROMPT = `Ты — агент-интервьюер сервиса знакомств AgentNet.
-Твоя задача: провести онбординг-интервью по 6 фазам, собирая информацию о пользователе.
+Твоя задача: провести онбординг-интервью по 7 фазам, собирая информацию о пользователе.
 
 Правила:
 - Задавай ОДИН вопрос за раз, выбирая из пула фазы тот что наиболее уместен
 - Слушай внимательно, задавай естественные уточнения если ответ неполный
 - После 2-3 содержательных ответов в фазе — переходи к следующей
-- Тон: тёплый, любопытный, без формальностей
+- Тон: тёплый, любопытный, без формальностей, без осуждения
 - Не объясняй пользователю структуру интервью — просто веди разговор
+- Фаза 7 — приватная: подчеркни что данные видит только алгоритм, не люди
 - В конце каждой фазы извлеки структурированные данные в JSON
 
 Текущая фаза и цель будут указаны в контексте.`
@@ -87,8 +102,18 @@ export async function conductOnboarding(userId, userMessage) {
   const profile = await db.getProfile(userId)
   const phase = (profile?.onboarding_phase || 0) + 1
 
-  if (phase > 6) {
+  // Determine max phases based on goal_type
+  const goalType = profile?.goal_type || profile?.onboarding_data?.goal_type
+  const maxPhase = (goalType === 'romantic' || !goalType) ? 7 : 6
+
+  if (phase > maxPhase) {
     return { done: true, message: null }
+  }
+
+  // Skip phase 7 for non-romantic goals
+  if (phase === 7 && goalType && goalType !== 'romantic') {
+    await finalizeProfile(userId, profile?.onboarding_data || {})
+    return { done: false, phaseComplete: true, finalPhase: true, message: null }
   }
 
   const phaseConfig = PHASES[phase]
@@ -97,7 +122,7 @@ export async function conductOnboarding(userId, userMessage) {
   // Build phase-aware system prompt
   const systemPrompt = `${SYSTEM_PROMPT}
 
-ТЕКУЩАЯ ФАЗА: ${phase}/6 — "${phaseConfig.name}"
+ТЕКУЩАЯ ФАЗА: ${phase}/${maxPhase} — "${phaseConfig.name}"
 ЦЕЛЬ ФАЗЫ: ${phaseConfig.goal}
 ВОПРОСЫ ИЗ ПУЛА: ${phaseConfig.questions.join(' | ')}
 
@@ -151,7 +176,7 @@ PHASE_COMPLETE:{"field1":"value1","field2":"value2"}`
 
   // Check if all phases done
   const newPhase = shouldAdvance ? phase : (profile?.onboarding_phase || 0)
-  if (newPhase >= 6 && shouldAdvance) {
+  if (newPhase >= maxPhase && shouldAdvance) {
     // Finalize profile
     await finalizeProfile(userId, updatedData)
     return {
@@ -178,7 +203,7 @@ async function finalizeProfile(userId, onboardingData) {
 Данные онбординга:
 ${JSON.stringify(onboardingData, null, 2)}
 
-Верни JSON с полями:
+Верни JSON с полями (все поля обязательны, используй null если данных нет):
 {
   "goal_type": "romantic|business|mentor",
   "archetype_tags": ["tag1", "tag2"],
@@ -187,15 +212,24 @@ ${JSON.stringify(onboardingData, null, 2)}
   "openness_score": 0.0-1.0,
   "hard_filters": {},
   "style_vector": {"directness": 0.0-1.0, "pace": 0.0-1.0, "structure": 0.0-1.0},
-  "showcase_public": "2-3 предложения о человеке для витрины",
-  "showcase_tags": ["tag1", "tag2", "tag3"]
+  "showcase_public": "2-3 предложения о человеке для витрины (без интимных деталей)",
+  "showcase_tags": ["tag1", "tag2", "tag3"],
+  "gender": "male|female|non-binary|other|null",
+  "age": число или null,
+  "physical_self": {"height": число или null, "weight": число или null, "body_type": "строка или null"},
+  "orientation": "heterosexual|homosexual|bisexual|other|null",
+  "relationship_format": "serious|casual|open|poly|other|null",
+  "physical_preferences": {"описание предпочтений по внешности партнёра или null},
+  "intimate_tags": ["тег1", "тег2"] или [],
+  "intimate_dealbreakers": ["тег1", "тег2"] или []
 }
 
+ВАЖНО: поля gender, age, orientation, relationship_format, physical_preferences, intimate_tags, intimate_dealbreakers — приватные, в showcase_public не упоминать.
 Верни ТОЛЬКО JSON, без пояснений.`
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 600,
+    max_tokens: 800,
     messages: [{ role: 'user', content: prompt }]
   })
 
@@ -203,10 +237,10 @@ ${JSON.stringify(onboardingData, null, 2)}
     const structured = JSON.parse(response.content[0].text)
     await db.upsertProfile(userId, {
       ...structured,
-      onboarding_phase: 7  // complete
+      onboarding_phase: 8  // complete
     })
   } catch (e) {
     // Fallback: mark as complete with raw data
-    await db.upsertProfile(userId, { onboarding_phase: 7 })
+    await db.upsertProfile(userId, { onboarding_phase: 8 })
   }
 }
