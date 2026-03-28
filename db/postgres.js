@@ -78,10 +78,15 @@ export const db = {
          AND p.profile_confirmed = TRUE
          AND p.embedding IS NOT NULL
          AND p.matching_active = TRUE
-         AND p.user_id NOT IN (
-           SELECT to_user_id FROM pings
-           WHERE from_user_id = $1
-             AND created_at > NOW() - INTERVAL '7 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM matches m
+           WHERE ((m.user_a_id = $1 AND m.user_b_id = p.user_id)
+               OR (m.user_b_id = $1 AND m.user_a_id = p.user_id))
+             AND m.created_at > COALESCE(
+               (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1),
+               '1970-01-01'::timestamptz
+             )
+             AND m.created_at > COALESCE(p.profile_updated_at, '1970-01-01'::timestamptz)
          )
        ORDER BY p.embedding <=> $2::vector
        LIMIT $3`,
@@ -99,10 +104,15 @@ export const db = {
        WHERE p.user_id != $1
          AND p.profile_confirmed = TRUE
          AND p.matching_active = TRUE
-         AND p.user_id NOT IN (
-           SELECT to_user_id FROM pings
-           WHERE from_user_id = $1
-             AND created_at > NOW() - INTERVAL '7 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM matches m
+           WHERE ((m.user_a_id = $1 AND m.user_b_id = p.user_id)
+               OR (m.user_b_id = $1 AND m.user_a_id = p.user_id))
+             AND m.created_at > COALESCE(
+               (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1),
+               '1970-01-01'::timestamptz
+             )
+             AND m.created_at > COALESCE(p.profile_updated_at, '1970-01-01'::timestamptz)
          )
        LIMIT $2`,
       [userId, limit]
@@ -134,10 +144,8 @@ export const db = {
   },
 
   async confirmProfile(userId, showcasePublic = null) {
-    const updates = { profile_confirmed: true, matching_active: true }
-    if (showcasePublic) updates.showcase_public = showcasePublic
     await pool.query(
-      `UPDATE profiles SET profile_confirmed = TRUE, matching_active = TRUE${showcasePublic ? ', showcase_public = $2' : ''} WHERE user_id = $1`,
+      `UPDATE profiles SET profile_confirmed = TRUE, matching_active = TRUE, profile_updated_at = NOW()${showcasePublic ? ', showcase_public = $2' : ''} WHERE user_id = $1`,
       showcasePublic ? [userId, showcasePublic] : [userId]
     )
   },

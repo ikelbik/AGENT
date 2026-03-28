@@ -140,7 +140,8 @@ async function finalizeProfile(userId, data, personaRef) {
     intimate_dealbreakers:    data.intimate_dealbreakers,
     persona_ref:              personaRef,
     onboarding_phase:         8,
-    onboarding_data:          data
+    onboarding_data:          data,
+    profile_updated_at:       new Date()
   }
 
   // Drop undefined — let DB keep existing values

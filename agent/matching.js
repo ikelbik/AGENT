@@ -387,11 +387,15 @@ export async function runMatching(userId) {
     log(`  running agent conversation...`)
     const conv = await agentConversation(profile, candidate)
     log(`  conv score=${conv.score.toFixed(2)} | "${conv.hypothesis}"`)
+    if (conv.transcript) {
+      conv.transcript.forEach(t => log(`    [${t.from}]: ${t.text?.slice(0, 80)}`))
+    }
 
-    const combinedScore = scoring.score * 0.4 + conv.score * 0.6
+    // data score (структура профиля) весит больше — агентский диалог вспомогательный
+    const combinedScore = scoring.score * 0.6 + conv.score * 0.4
     log(`  combined=${combinedScore.toFixed(2)} (data=${scoring.score.toFixed(2)} conv=${conv.score.toFixed(2)})`)
 
-    if (combinedScore < 0.4) {
+    if (combinedScore < 0.35) {
       log(`  SKIP — combined score too low`)
       continue
     }
