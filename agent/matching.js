@@ -1,37 +1,10 @@
-import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import { db } from '../db/postgres.js'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// ─── Embedding ────────────────────────────────────────────────────────────────
-
-export async function computeEmbedding(text) {
-  const response = await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: text
-  })
-  return response.data[0].embedding
-}
-
-export async function updateProfileEmbedding(userId, profile) {
-  const text = buildEmbeddingText(profile)
-  const embedding = await computeEmbedding(text)
-  await db.upsertProfile(userId, { embedding: JSON.stringify(embedding) })
-  return embedding
-}
-
-function buildEmbeddingText(profile) {
-  return [
-    profile.goal_type,
-    profile.archetype_tags?.join(' '),
-    profile.showcase_public,
-    profile.showcase_tags?.join(' '),
-    profile.decision_style,
-    JSON.stringify(profile.style_vector || {})
-  ].filter(Boolean).join('. ')
-}
+// Embedding removed — using score-based matching only
+export async function updateProfileEmbedding() {}
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
@@ -182,16 +155,7 @@ async function passesHardFilters(profileA, profileB) {
 // ─── Find candidates ──────────────────────────────────────────────────────────
 
 export async function findCandidates(userId, profile) {
-  let candidates
-
-  if (profile.embedding) {
-    const embeddingArray = typeof profile.embedding === 'string'
-      ? JSON.parse(profile.embedding)
-      : profile.embedding
-    candidates = await db.findCandidates(userId, embeddingArray, 30)
-  } else {
-    candidates = await db.findCandidatesWithoutEmbedding(userId, 50)
-  }
+  const candidates = await db.findCandidatesWithoutEmbedding(userId, 50)
 
   // Filter by goal type compatibility first (cheap, no API calls)
   const goalFiltered = candidates.filter(c =>
