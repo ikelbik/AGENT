@@ -9,6 +9,11 @@ import 'dotenv/config'
 let botInstance = null
 
 
+// Escape HTML special chars in dynamic (user/Claude-generated) content
+function esc(s) {
+  return String(s ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 export function createBot() {
   if (botInstance) return botInstance
 
@@ -41,8 +46,8 @@ export function createBot() {
             .text('✅ Всё верно', `confirm_profile:${user.id}`)
             .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
           await ctx.reply(
-            `✅ *Профиль готов!*\n\nВот как агент тебя описал:\n\n_${freshProfile?.showcase_public || '—'}_\n\nВсё верно?`,
-            { parse_mode: 'Markdown', reply_markup: kb }
+            `✅ <b>Профиль готов!</b>\n\nВот как агент тебя описал:\n\n${esc(freshProfile?.showcase_public)}\n\nВсё верно?`,
+            { parse_mode: 'HTML', reply_markup: kb }
           )
         }
       } catch (e) {
@@ -68,13 +73,13 @@ export function createBot() {
     }
 
     await ctx.reply(
-      `👤 *Твой профиль*\n\n` +
-      `*Цель:* ${profile.goal_type || '—'}\n` +
-      `*Теги:* ${(profile.archetype_tags || []).join(', ') || '—'}\n` +
-      `*Открытость:* ${Math.round((profile.openness_score || 0.5) * 100)}%\n` +
-      `*Прямолинейность:* ${Math.round((profile.communication_directness || 0.5) * 100)}%\n\n` +
-      `*Витрина:*\n${profile.showcase_public || '—'}`,
-      { parse_mode: 'Markdown' }
+      `👤 <b>Твой профиль</b>\n\n` +
+      `<b>Цель:</b> ${esc(profile.goal_type || '—')}\n` +
+      `<b>Теги:</b> ${esc((profile.archetype_tags || []).join(', ') || '—')}\n` +
+      `<b>Открытость:</b> ${Math.round((profile.openness_score || 0.5) * 100)}%\n` +
+      `<b>Прямолинейность:</b> ${Math.round((profile.communication_directness || 0.5) * 100)}%\n\n` +
+      `<b>Витрина:</b>\n${esc(profile.showcase_public || '—')}`,
+      { parse_mode: 'HTML' }
     )
   })
 
@@ -186,9 +191,9 @@ export function createBot() {
       await ctx.reply(
         `🧪 *Тестовый профиль создан!*\n\n` +
         `Тип: *${goalType}*\n` +
-        `Витрина: _${profiles[goalType].showcase_public}_\n\n` +
+        `Витрина: ${esc(profiles[goalType].showcase_public)}\n\n` +
         `Поиск запущен. /pings — входящие пинги`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'HTML' }
       )
     })
   }
@@ -225,10 +230,10 @@ export function createBot() {
         .text('❌ Отклонить', `reject:${ping.id}`)
 
       await ctx.reply(
-        `📨 *Пинг от агента*\n\n` +
-        `_Гипотеза: ${ping.hypothesis}_\n\n` +
-        `${ping.ping_text}`,
-        { parse_mode: 'Markdown', reply_markup: kb }
+        `📨 <b>Пинг от агента</b>\n\n` +
+        `<i>Гипотеза: ${esc(ping.hypothesis)}</i>\n\n` +
+        `${esc(ping.ping_text)}`,
+        { parse_mode: 'HTML', reply_markup: kb }
       )
     }
   })
@@ -457,8 +462,7 @@ export function createBot() {
       await db.confirmProfile(user.id, ctx.message.text)
       await scheduleMatching(user.id)
       await ctx.reply(
-        `✅ Описание обновлено:\n\n_${ctx.message.text}_\n\nЗапускаю поиск!`,
-        { parse_mode: 'Markdown' }
+        `✅ Описание обновлено:\n\n${esc(ctx.message.text)}\n\nЗапускаю поиск!`
       )
       return
     }
@@ -478,8 +482,8 @@ export function createBot() {
               .text('✅ Всё верно', `confirm_profile:${user.id}`)
               .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
             await ctx.reply(
-              `Вот твоё описание — подтверди чтобы начать поиск:\n\n_${freshProfile?.showcase_public || '—'}_`,
-              { parse_mode: 'Markdown', reply_markup: kb }
+              `Вот твоё описание — подтверди чтобы начать поиск:\n\n${esc(freshProfile?.showcase_public)}`,
+              { reply_markup: kb }
             )
           }
           return
@@ -494,11 +498,11 @@ export function createBot() {
             .text('✅ Всё верно', `confirm_profile:${user.id}`)
             .text('✏️ Изменить описание', `edit_showcase:${user.id}`)
           await ctx.reply(
-            `✅ *Профиль готов!*\n\n` +
+            `✅ <b>Профиль готов!</b>\n\n` +
             `Вот как агент тебя описал — это увидят другие агенты при подборе:\n\n` +
-            `_${freshProfile?.showcase_public || '—'}_\n\n` +
+            `${esc(freshProfile?.showcase_public)}\n\n` +
             `Всё верно?`,
-            { parse_mode: 'Markdown', reply_markup: kb }
+            { parse_mode: 'HTML', reply_markup: kb }
           )
         }
       } catch (e) {
