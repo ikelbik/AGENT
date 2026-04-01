@@ -182,6 +182,20 @@ app.delete('/api/agents/:agentId', auth, async (req, res) => {
   }
 })
 
+// Toggle matching active for agent
+app.put('/api/agents/:agentId/matching', auth, async (req, res) => {
+  try {
+    const { active } = req.body
+    await pool.query(
+      'UPDATE profiles SET matching_active = $1, matching_stopped_at = $2 WHERE id = $3',
+      [active, active ? null : new Date(), req.params.agentId]
+    )
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // Reset specific agent
 app.post('/api/agents/:agentId/reset', auth, async (req, res) => {
   try {
