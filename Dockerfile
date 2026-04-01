@@ -10,5 +10,6 @@ COPY bot/ ./bot/
 COPY queue/ ./queue/
 COPY agent/ ./agent/
 COPY db/ ./db/
+COPY server/ ./server/
 
 CMD ["node", "index.js"]
