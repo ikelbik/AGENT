@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AgentNet</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    :root {
+      --bg:       #0D0D1A;
+      --surface:  #161625;
+      --surface2: #1E1E35;
+      --accent:   #7C6BFF;
+      --accent2:  #A78BFF;
+      --text:     #E8E8F5;
+      --sub:      #7777AA;
+      --border:   #2A2A45;
+      --ok:       #4ECDC4;
+      --r:        16px;
+      --r-sm:     10px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100dvh;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Splash ──────────────────────────────────── */
+
+    #splash {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 999;
+      transition: opacity .5s ease, visibility .5s;
+    }
+    #splash.out { opacity: 0; visibility: hidden; }
+
+    .splash-logo {
+      width: 88px; height: 88px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 26px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 40px;
+      margin-bottom: 24px;
+      animation: pulse 2.4s ease-in-out infinite;
+      box-shadow: 0 0 50px rgba(124,107,255,.45);
+    }
+    @keyframes pulse {
+      0%,100% { transform: scale(1);    box-shadow: 0 0 50px rgba(124,107,255,.45); }
+      50%      { transform: scale(1.06); box-shadow: 0 0 80px rgba(124,107,255,.65); }
+    }
+
+    .splash-title    { font-size: 30px; font-weight: 800; letter-spacing: -.5px; margin-bottom: 6px; }
+    .splash-subtitle { font-size: 14px; color: var(--sub); margin-bottom: 52px; }
+
+    .splash-bar {
+      width: 180px; height: 3px;
+      background: var(--border); border-radius: 2px; overflow: hidden;
+    }
+    .splash-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 2px; width: 0;
+      transition: width .35s cubic-bezier(.4,0,.2,1);
+    }
+
+    /* ── App shell ───────────────────────────────── */
+
+    #app {
+      display: flex; flex-direction: column;
+      height: 100dvh;
+      opacity: 0; transition: opacity .3s ease;
+    }
+    #app.in { opacity: 1; }
+
+    /* ── Header ──────────────────────────────────── */
+
+    .hdr {
+      padding: 14px 18px 10px;
+      display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .hdr-logo {
+      width: 30px; height: 30px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+    }
+    .hdr-title  { font-size: 17px; font-weight: 700; }
+    .hdr-badge  {
+      margin-left: auto;
+      font-size: 11px; color: var(--sub);
+      padding: 3px 10px;
+      background: var(--surface); border-radius: 20px;
+    }
+
+    /* ── Tabs ────────────────────────────────────── */
+
+    .tabs { flex: 1; overflow: hidden; position: relative; }
+
+    .pane {
+      position: absolute; inset: 0;
+      overflow-y: auto;
+      display: flex; flex-direction: column;
+      opacity: 0; transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity .22s ease, transform .22s ease;
+    }
+    .pane.on { opacity: 1; transform: none; pointer-events: all; }
+
+    .tab-bar {
+      display: flex;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab-btn {
+      flex: 1; padding: 8px 0 10px;
+      background: none; border: none;
+      color: var(--sub); cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      font-size: 10px; transition: color .2s;
+    }
+    .tab-btn.on  { color: var(--accent2); }
+    .tab-icon    { font-size: 22px; }
+
+    /* ── Chat ────────────────────────────────────── */
+
+    .chat-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+
+    .msgs {
+      flex: 1; overflow-y: auto;
+      padding: 14px 14px 6px;
+      display: flex; flex-direction: column; gap: 7px;
+    }
+
+    .msg {
+      max-width: 82%; padding: 9px 13px;
+      border-radius: 15px; font-size: 14px; line-height: 1.5;
+      animation: msgIn .22s ease;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    @keyframes msgIn { from { opacity:0; transform:translateY(7px); } }
+
+    .msg.agent  { background: var(--surface2); color: var(--text); border-bottom-left-radius: 4px; align-self: flex-start; }
+    .msg.user   { background: var(--accent); color:#fff; border-bottom-right-radius: 4px; align-self: flex-end; }
+    .msg.sys    { background: none; color: var(--sub); font-size: 12px; text-align: center; align-self: center; padding: 2px 0; animation: none; }
+
+    .typing {
+      display: flex; gap: 4px; padding: 11px 15px;
+      background: var(--surface2); border-radius: 15px;
+      border-bottom-left-radius: 4px; align-self: flex-start;
+      animation: msgIn .22s ease;
+    }
+    .typing span {
+      width: 6px; height: 6px; background: var(--sub); border-radius: 50%;
+      animation: dot 1.2s ease infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes dot { 0%,60%,100% { transform:translateY(0);opacity:.5; } 30% { transform:translateY(-6px);opacity:1; } }
+
+    .chat-input {
+      padding: 7px 11px 8px;
+      display: flex; gap: 8px; align-items: flex-end;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .chat-input textarea {
+      flex: 1;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 9px 15px;
+      color: var(--text); font-size: 14px; font-family: inherit;
+      resize: none; max-height: 110px; overflow-y: auto;
+      outline: none; line-height: 1.4;
+      transition: border-color .2s;
+    }
+    .chat-input textarea:focus    { border-color: var(--accent); }
+    .chat-input textarea::placeholder { color: var(--sub); }
+
+    .send-btn {
+      width: 40px; height: 40px;
+      background: var(--accent); border: none; border-radius: 50%;
+      color: #fff; font-size: 17px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background .2s, transform .1s;
+    }
+    .send-btn:active   { transform: scale(.9); background: #5b4ed4; }
+    .send-btn:disabled { background: var(--border); cursor: default; }
+
+    /* ── Profile card ────────────────────────────── */
+
+    .card {
+      margin: 14px;
+      background: var(--surface);
+      border-radius: var(--r);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .card-hdr {
+      padding: 18px 18px 14px;
+      background: linear-gradient(135deg,rgba(124,107,255,.18),rgba(167,139,255,.08));
+      border-bottom: 1px solid var(--border);
+    }
+    .card-avatar {
+      width: 52px; height: 52px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px; margin-bottom: 10px;
+    }
+    .card-name { font-size: 17px; font-weight: 700; margin-bottom: 3px; }
+    .card-goal { font-size: 12px; color: var(--accent2); }
+    .card-body { padding: 14px 18px 18px; }
+
+    .field       { margin-bottom: 13px; }
+    .field-label { font-size: 10px; color: var(--sub); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+    .field-val   { font-size: 14px; line-height: 1.5; }
+
+    .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+    .tag  { padding: 3px 9px; background: rgba(124,107,255,.13); border: 1px solid rgba(124,107,255,.3); border-radius: 20px; font-size: 12px; color: var(--accent2); }
+
+    .persona-box {
+      margin: 0 14px 14px;
+      padding: 14px 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r);
+    }
+    .persona-box .field-label { margin-bottom: 8px; }
+    .persona-text { font-size: 13px; color: var(--sub); line-height: 1.6; font-style: italic; }
+
+    /* ── Buttons ─────────────────────────────────── */
+
+    .btn {
+      display: block; width: 100%; padding: 13px;
+      background: var(--accent); border: none; border-radius: var(--r-sm);
+      color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+      text-align: center; transition: background .2s, transform .1s;
+    }
+    .btn:active         { transform: scale(.98); background: #5b4ed4; }
+    .btn.sec            { background: var(--surface2); color: var(--text); }
+    .btn.danger         { background: rgba(255,80,80,.15); color: #ff6b6b; border: 1px solid rgba(255,80,80,.3); }
+
+    /* ── Matches list ────────────────────────────── */
+
+    .match-list { padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+
+    .match-card {
+      background: var(--surface); border-radius: var(--r);
+      padding: 14px 14px 12px; border: 1px solid var(--border);
+      cursor: pointer; transition: border-color .2s, transform .1s;
+    }
+    .match-card:active { transform: scale(.98); border-color: var(--accent); }
+
+    .match-top  { display: flex; align-items: center; gap: 11px; margin-bottom: 9px; }
+    .m-avatar   { width: 42px; height: 42px; background: linear-gradient(135deg,#FF6B6B,#FFB347); border-radius: 13px; display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0; }
+    .m-info     { flex:1; min-width:0; }
+    .m-name     { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+    .m-hyp      { font-size: 12px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m-score    { font-size: 18px; font-weight: 700; color: var(--ok); flex-shrink: 0; }
+
+    .m-status   { display:inline-block; font-size: 11px; padding: 3px 9px; border-radius: 20px; background: rgba(78,205,196,.13); border: 1px solid rgba(78,205,196,.3); color: var(--ok); }
+    .m-status.mutual { background: rgba(255,107,107,.13); border-color: rgba(255,107,107,.3); color: #ff6b6b; }
+
+    /* ── Match detail ────────────────────────────── */
+
+    .detail-hdr {
+      padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .back-btn { background:none;border:none;color:var(--accent2);font-size:20px;cursor:pointer;padding:2px 6px; }
+    .detail-name { font-size: 16px; font-weight: 600; }
+    .detail-sub  { font-size: 11px; color: var(--sub); }
+
+    .transcript-wrap {
+      padding: 12px 14px 8px;
+      background: var(--surface);
+      margin: 10px 12px;
+      border-radius: var(--r);
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tr-label { font-size: 10px; color: var(--sub); text-transform:uppercase; letter-spacing:.5px; margin-bottom: 10px; }
+    .tr-msg   { display:flex; gap:8px; margin-bottom:8px; }
+    .tr-who   { font-size: 13px; flex-shrink:0; }
+    .tr-text  { font-size: 13px; color: var(--sub); line-height: 1.5; font-style:italic; }
+
+    .intent-wrap { padding: 6px 12px 10px; flex-shrink: 0; }
+    .mutual-box  { background:rgba(78,205,196,.1);border:1px solid rgba(78,205,196,.3);border-radius:12px;padding:14px;text-align:center; }
+    .mutual-icon { font-size:20px;margin-bottom:4px; }
+    .mutual-title { font-weight:600;color:var(--ok);font-size:15px; }
+    .mutual-sub   { font-size:12px;color:var(--sub);margin-top:4px; }
+
+    /* ── Misc ────────────────────────────────────── */
+
+    .empty {
+      flex:1; display:flex;flex-direction:column;
+      align-items:center;justify-content:center;
+      gap:11px;color:var(--sub);padding:40px;text-align:center;
+    }
+    .empty-icon  { font-size:50px;opacity:.4; }
+    .empty-title { font-size:16px;font-weight:600;color:var(--text); }
+    .empty-text  { font-size:13px;line-height:1.5; }
+
+    .spin-wrap { display:flex;align-items:center;justify-content:center;padding:36px; }
+    .spinner   { width:26px;height:26px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius:2px; }
+  </style>
+</head>
+<body>
+
+<!-- Splash -->
+<div id="splash">
+  <div class="splash-logo">🤖</div>
+  <div class="splash-title">AgentNet</div>
+  <div class="splash-subtitle">AI-знакомства нового поколения</div>
+  <div class="splash-bar"><div class="splash-fill" id="fill"></div></div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-logo">🤖</div>
+    <div class="hdr-title">AgentNet</div>
+    <div class="hdr-badge" id="hdrBadge">—</div>
+  </div>
+
+  <div class="tabs">
+    <div class="pane on" id="pane-agent"></div>
+    <div class="pane"    id="pane-matches"></div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn on" data-tab="agent"   onclick="switchTab('agent')">
+      <span class="tab-icon">🤖</span><span>Мой агент</span>
+    </button>
+    <button class="tab-btn"    data-tab="matches" onclick="switchTab('matches')">
+      <span class="tab-icon">💫</span><span>Матчи</span>
+    </button>
+  </div>
+</div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const API_URL = 'https://YOUR_BACKEND_URL'   // ← вставь Railway URL бэкенда
+
+// ─── State ────────────────────────────────────────────────────────────────────
+const S = { userId: null, profile: null, initData: null, tab: 'agent', detailId: null }
+
+// ─── LocalStorage ─────────────────────────────────────────────────────────────
+const LS = {
+  get: (k, d=null) => { try { return JSON.parse(localStorage.getItem(k))??d } catch { return d } },
+  set: (k, v)      => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+}
+const chatKey  = ()  => `an_chat_${S.userId}`
+const mChatKey = (id)=> `an_mc_${id}`
+
+// ─── API ──────────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const r = await fetch(API_URL + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': S.initData||'' },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  })
+  const json = await r.json()
+  if (!r.ok) throw new Error(json.error || r.statusText)
+  return json
+}
+const GET  = p    => api('GET',  p)
+const POST = (p,b)=> api('POST', p, b)
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+function esc(s) {
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+}
+
+function goalLabel(g) {
+  return ({romantic:'💕 Романтика', business:'💼 Бизнес', mentor:'🎓 Менторство'})[g] || g || '—'
+}
+
+function appendMsg(el, role, text, animate=true) {
+  const d = document.createElement('div')
+  d.className = `msg ${role}`
+  if (!animate) d.style.animation = 'none'
+  d.textContent = text
+  el.appendChild(d)
+  return d
+}
+
+function showTyping(el) {
+  const d = document.createElement('div')
+  d.className = 'typing'
+  d.innerHTML = '<span></span><span></span><span></span>'
+  el.appendChild(d)
+  el.scrollTop = el.scrollHeight
+  return d
+}
+
+function autoResize(ta) {
+  ta.style.height = 'auto'
+  ta.style.height = Math.min(ta.scrollHeight, 110) + 'px'
+}
+
+// ─── Splash ───────────────────────────────────────────────────────────────────
+async function boot() {
+  const fill = document.getElementById('fill')
+  const steps = [[200,25],[500,55],[900,80]]
+  steps.forEach(([ms,w]) => setTimeout(() => fill.style.width = w+'%', ms))
+
+  await initAuth()
+
+  fill.style.width = '100%'
+  await sleep(400)
+
+  document.getElementById('splash').classList.add('out')
+  document.getElementById('app').classList.add('in')
+
+  await sleep(100)
+  renderAgentTab()
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+async function initAuth() {
+  const tg = window.Telegram?.WebApp
+  if (tg?.initData) { tg.ready(); tg.expand(); S.initData = tg.initData }
+
+  try {
+    const res = await POST('/api/auth', { initData: S.initData||'' })
+    S.userId  = res.userId
+    S.profile = res.profile
+    updateBadge()
+  } catch (e) { console.error('auth', e) }
+}
+
+function updateBadge() {
+  const el = document.getElementById('hdrBadge')
+  el.textContent = S.profile?.profile_confirmed ? goalLabel(S.profile.goal_type) : 'Онбординг'
+}
+
+// ─── Tab switching ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  if (S.tab === tab) return
+  S.tab = tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('on', b.dataset.tab===tab))
+  document.querySelectorAll('.pane').forEach(p   => p.classList.toggle('on', p.id==='pane-'+tab))
+  if (tab === 'matches') renderMatchesTab()
+}
+
+// ─── Agent tab ────────────────────────────────────────────────────────────────
+function renderAgentTab() {
+  const el = pane('agent')
+  if (!S.userId) {
+    el.innerHTML = empty('⚠️','Ошибка авторизации','Открой приложение через Telegram')
+    return
+  }
+  if (!S.profile?.profile_confirmed) renderOnboarding(el)
+  else renderProfileCard(el)
+}
+
+// Onboarding chat
+function renderOnboarding(el) {
+  const msgs = LS.get(chatKey(), [])
+  el.innerHTML = `
+    <div class="chat-wrap">
+      <div class="msgs" id="cMsgs"></div>
+      <div class="chat-input">
+        <textarea id="cInput" placeholder="Напиши что-нибудь..." rows="1"></textarea>
+        <button class="send-btn" id="cBtn" onclick="sendMsg()">➤</button>
+      </div>
+    </div>`
+
+  const msgsEl = id('cMsgs')
+  if (msgs.length === 0) {
+    appendMsg(msgsEl, 'agent', 'Привет! Я помогу создать твоего агента. Расскажи — что ты ищешь? Опиши свободно и подробно.', false)
+  } else {
+    msgs.forEach(m => appendMsg(msgsEl, m.r, m.t, false))
+  }
+  msgsEl.scrollTop = msgsEl.scrollHeight
+
+  const inp = id('cInput')
+  inp.addEventListener('input', () => autoResize(inp))
+  inp.addEventListener('keydown', e => { if (e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMsg() } })
+  inp.focus()
+}
+
+async function sendMsg() {
+  const inp  = id('cInput')
+  const text = inp.value.trim()
+  if (!text) return
+
+  const btn   = id('cBtn')
+  const msgs  = id('cMsgs')
+  inp.value   = ''; inp.style.height = 'auto'; btn.disabled = true
+
+  appendMsg(msgs, 'user', text)
+  saveChat('user', text)
+  msgs.scrollTop = msgs.scrollHeight
+
+  const dot = showTyping(msgs)
+  try {
+    const res = await POST('/api/chat', { message: text })
+    dot.remove()
+    if (res.message) { appendMsg(msgs, 'agent', res.message); saveChat('agent', res.message) }
+    msgs.scrollTop = msgs.scrollHeight
+
+    if (res.finalPhase || res.done) {
+      const r2 = await GET('/api/profile')
+      S.profile = r2.profile
+      updateBadge()
+      await sleep(500)
+      renderProfileCard(pane('agent'))
+    }
+  } catch (e) {
+    dot.remove()
+    appendMsg(msgs, 'agent', '⚠️ Ошибка. Попробуй ещё раз.')
+    msgs.scrollTop = msgs.scrollHeight
+  }
+  btn.disabled = false
+}
+
+function saveChat(r, t) {
+  const arr = LS.get(chatKey(), [])
+  arr.push({ r, t })
+  LS.set(chatKey(), arr)
+}
+
+// Profile card
+function renderProfileCard(el) {
+  const p    = S.profile
+  const tags = (p.archetype_tags||[]).slice(0,6)
+
+  el.innerHTML = `
+    <div style="padding-bottom:20px">
+      <div class="card">
+        <div class="card-hdr">
+          <div class="card-avatar">🤖</div>
+          <div class="card-name">Твой агент</div>
+          <div class="card-goal">${goalLabel(p.goal_type)}</div>
+        </div>
+        <div class="card-body">
+          ${p.showcase_public ? `
+            <div class="field">
+              <div class="field-label">О тебе</div>
+              <div class="field-val">${esc(p.showcase_public)}</div>
+            </div>` : ''}
+          ${tags.length ? `
+            <div class="field">
+              <div class="field-label">Теги</div>
+              <div class="tags">${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+            </div>` : ''}
+          ${p.decision_style ? `
+            <div class="field">
+              <div class="field-label">Стиль решений</div>
+              <div class="field-val">${esc(p.decision_style)}</div>
+            </div>` : ''}
+          <button class="btn danger" onclick="doReset()" style="margin-top:14px">
+            🔄 Пересоздать агента
+          </button>
+        </div>
+      </div>
+      ${p.persona_ref ? `
+        <div class="persona-box">
+          <div class="field-label">Голос агента</div>
+          <div class="persona-text">${esc(p.persona_ref)}</div>
+        </div>` : ''}
+    </div>`
+}
+
+async function doReset() {
+  if (!confirm('Пересоздать агента? Данные профиля будут удалены.')) return
+  LS.set(chatKey(), [])
+  try {
+    await POST('/api/profile/reset')
+    S.profile = null
+    updateBadge()
+    renderAgentTab()
+  } catch (e) { alert('Ошибка: '+e.message) }
+}
+
+// ─── Matches tab ──────────────────────────────────────────────────────────────
+async function renderMatchesTab() {
+  if (S.detailId) { renderDetail(S.detailId); return }
+
+  const el = pane('matches')
+  el.innerHTML = spinner()
+
+  try {
+    const { matches } = await GET('/api/matches')
+    if (!matches?.length) {
+      el.innerHTML = empty('💫','Матчей пока нет','Агент ищет подходящих кандидатов.\nОбычно это занимает несколько минут.')
+      return
+    }
+    el.innerHTML = `<div class="match-list">${matches.map(matchCard).join('')}</div>`
+  } catch {
+    el.innerHTML = empty('⚠️','Ошибка загрузки','')
+  }
+}
+
+function matchCard(m) {
+  const isA    = m.user_a_id === S.userId
+  const name   = esc(isA ? (m.user_b_username||'Кандидат') : (m.user_a_username||'Кандидат'))
+  const score  = Math.round((m.score||0)*100)
+  const mutual = m.status === 'mutual'
+  return `
+    <div class="match-card" onclick="openMatch('${m.id}')">
+      <div class="match-top">
+        <div class="m-avatar">👤</div>
+        <div class="m-info">
+          <div class="m-name">@${name}</div>
+          <div class="m-hyp">${esc(m.hypothesis||'—')}</div>
+        </div>
+        <div class="m-score">${score}%</div>
+      </div>
+      <span class="m-status${mutual?' mutual':''}">${mutual?'🎉 Взаимный интерес':'✨ Найден матч'}</span>
+    </div>`
+}
+
+function openMatch(id) { S.detailId = id; renderDetail(id) }
+
+async function renderDetail(matchId) {
+  const el = pane('matches')
+  el.innerHTML = spinner()
+
+  try {
+    const { match } = await GET(`/api/match/${matchId}`)
+    const isA    = String(match.user_a_id) === String(S.userId)
+    const name   = esc(isA ? (match.user_b_username||'Кандидат') : (match.user_a_username||'Кандидат'))
+    const score  = Math.round((match.score||0)*100)
+    const mutual = match.status === 'mutual'
+    const hasMyIntent = isA ? match.intent_a : match.intent_b
+    const conv   = match.conversation || []
+    const local  = LS.get(mChatKey(matchId), [])
+
+    el.innerHTML = `
+      <div style="display:flex;flex-direction:column;height:100%">
+        <div class="detail-hdr">
+          <button class="back-btn" onclick="closeMatch()">←</button>
+          <div>
+            <div class="detail-name">@${name}</div>
+            <div class="detail-sub">Совместимость: ${score}%</div>
+          </div>
+        </div>
+
+        <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column">
+          ${conv.length ? `
+            <div class="transcript-wrap">
+              <div class="tr-label">Разговор агентов</div>
+              ${conv.map(t=>`
+                <div class="tr-msg">
+                  <div class="tr-who">${t.from==='A'?'🤖':'👤'}</div>
+                  <div class="tr-text">${esc(t.text)}</div>
+                </div>`).join('')}
+            </div>` : ''}
+
+          <div class="intent-wrap">
+            ${mutual
+              ? `<div class="mutual-box">
+                   <div class="mutual-icon">🎉</div>
+                   <div class="mutual-title">Взаимный интерес!</div>
+                   <div class="mutual-sub">Контакт обменян в Telegram</div>
+                 </div>`
+              : hasMyIntent
+                ? `<div style="text-align:center;color:var(--sub);font-size:13px;padding:6px">⏳ Ждём ответа кандидата...</div>`
+                : `<button class="btn" onclick="setIntent('${matchId}')">💫 Хочу познакомиться</button>`
+            }
+          </div>
+
+          <div class="chat-wrap" style="border-top:1px solid var(--border);min-height:180px">
+            <div class="msgs" id="mMsgs">
+              ${local.length
+                ? local.map(m=>`<div class="msg ${m.r==='user'?'user':'agent'}" style="animation:none">${esc(m.t)}</div>`).join('')
+                : '<div class="msg sys">Задай вопрос агенту кандидата</div>'}
+            </div>
+            <div class="chat-input">
+              <textarea id="mInput" placeholder="Спроси что-нибудь..." rows="1"></textarea>
+              <button class="send-btn" id="mBtn" onclick="sendQ('${matchId}')">➤</button>
+            </div>
+          </div>
+        </div>
+      </div>`
+
+    const mm = id('mMsgs')
+    mm.scrollTop = mm.scrollHeight
+
+    const inp = id('mInput')
+    inp.addEventListener('input', () => autoResize(inp))
+    inp.addEventListener('keydown', e => { if (e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendQ(matchId) } })
+  } catch {
+    el.innerHTML = empty('⚠️','Ошибка загрузки','')
+  }
+}
+
+function closeMatch() { S.detailId = null; renderMatchesTab() }
+
+async function sendQ(matchId) {
+  const inp  = id('mInput')
+  const text = inp.value.trim()
+  if (!text) return
+
+  const btn  = id('mBtn')
+  const msgs = id('mMsgs')
+  inp.value  = ''; inp.style.height = 'auto'; btn.disabled = true
+
+  appendMsg(msgs, 'user', text)
+  saveMChat(matchId, 'user', text)
+  msgs.scrollTop = msgs.scrollHeight
+
+  const dot = showTyping(msgs)
+  try {
+    const res = await POST(`/api/match/${matchId}/ask`, { question: text })
+    dot.remove()
+    const answer = res.routed
+      ? '📨 Вопрос передан кандидату напрямую — ответит в Telegram'
+      : res.answer
+    appendMsg(msgs, 'agent', answer)
+    saveMChat(matchId, 'agent', answer)
+    msgs.scrollTop = msgs.scrollHeight
+  } catch (e) {
+    dot.remove()
+    appendMsg(msgs, 'agent', '⚠️ Ошибка. Попробуй ещё раз.')
+    msgs.scrollTop = msgs.scrollHeight
+  }
+  btn.disabled = false
+}
+
+async function setIntent(matchId) {
+  try {
+    await POST(`/api/match/${matchId}/intent`)
+    renderDetail(matchId)
+  } catch (e) { alert('Ошибка: '+e.message) }
+}
+
+function saveMChat(matchId, r, t) {
+  const arr = LS.get(mChatKey(matchId), [])
+  arr.push({ r, t })
+  LS.set(mChatKey(matchId), arr)
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+const id      = s  => document.getElementById(s)
+const pane    = t  => id('pane-'+t)
+const spinner = () => '<div class="spin-wrap"><div class="spinner"></div></div>'
+const empty   = (icon,title,text) =>
+  `<div class="empty"><div class="empty-icon">${icon}</div><div class="empty-title">${title}</div><div class="empty-text">${esc(text)}</div></div>`
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+boot()
+</script>
+</body>
+</html>

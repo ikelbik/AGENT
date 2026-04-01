@@ -327,12 +327,14 @@ export const db = {
   async getMatch(matchId) {
     const { rows } = await pool.query(
       `SELECT m.*,
-              ua.telegram_id AS user_a_telegram,
-              ub.telegram_id AS user_b_telegram,
+              ua.telegram_id AS user_a_telegram, ua.username AS user_a_username,
+              ub.telegram_id AS user_b_telegram, ub.username AS user_b_username,
+              pa.persona_ref AS persona_a, pa.showcase_public AS showcase_a,
               pb.persona_ref AS persona_b, pb.showcase_public AS showcase_b
        FROM matches m
        JOIN users ua ON ua.id = m.user_a_id
        JOIN users ub ON ub.id = m.user_b_id
+       LEFT JOIN profiles pa ON pa.user_id = m.user_a_id
        LEFT JOIN profiles pb ON pb.user_id = m.user_b_id
        WHERE m.id = $1`,
       [matchId]
