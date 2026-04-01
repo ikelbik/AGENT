@@ -221,10 +221,10 @@ app.post('/api/chat', auth, async (req, res) => {
   }
 })
 
-// Get matches
+// Get matches (optional ?agentId= to filter by specific agent profile)
 app.get('/api/matches', auth, async (req, res) => {
   try {
-    const matches = await db.getMatchesForUser(req.userId)
+    const matches = await db.getMatchesForUser(req.userId, req.query.agentId || null)
     res.json({ matches })
   } catch (e) {
     res.status(500).json({ error: e.message })

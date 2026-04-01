@@ -350,20 +350,26 @@ export const db = {
 
   // ─── Matches ────────────────────────────────────────────────────────────────
 
-  async createMatch(userAId, userBId, score, hypothesis, conversation) {
+  async createMatch(userAId, userBId, score, hypothesis, conversation, profileAId = null, profileBId = null) {
     const { rows } = await pool.query(
-      `INSERT INTO matches (user_a_id, user_b_id, score, hypothesis, conversation)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO matches (user_a_id, user_b_id, score, hypothesis, conversation, profile_a_id, profile_b_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_a_id, user_b_id) DO UPDATE
          SET score = EXCLUDED.score, hypothesis = EXCLUDED.hypothesis,
-             conversation = EXCLUDED.conversation, updated_at = NOW()
+             conversation = EXCLUDED.conversation,
+             profile_a_id = EXCLUDED.profile_a_id, profile_b_id = EXCLUDED.profile_b_id,
+             updated_at = NOW()
        RETURNING *`,
-      [userAId, userBId, score, hypothesis, JSON.stringify(conversation)]
+      [userAId, userBId, score, hypothesis, JSON.stringify(conversation), profileAId, profileBId]
     )
     return rows[0]
   },
 
-  async getMatchesForUser(userId) {
+  async getMatchesForUser(userId, profileId = null) {
+    const filter = profileId
+      ? `AND (m.profile_a_id = $2 OR m.profile_b_id = $2)`
+      : ''
+    const params = profileId ? [userId, profileId] : [userId]
     const { rows } = await pool.query(
       `SELECT m.*,
               ua.telegram_id AS user_a_telegram, ua.username AS user_a_username,
@@ -373,12 +379,13 @@ export const db = {
        FROM matches m
        JOIN users ua ON ua.id = m.user_a_id
        JOIN users ub ON ub.id = m.user_b_id
-       LEFT JOIN profiles pa ON pa.user_id = m.user_a_id
-       LEFT JOIN profiles pb ON pb.user_id = m.user_b_id
+       LEFT JOIN profiles pa ON pa.id = m.profile_a_id
+       LEFT JOIN profiles pb ON pb.id = m.profile_b_id
        WHERE (m.user_a_id = $1 OR m.user_b_id = $1)
          AND m.status != 'closed'
+         ${filter}
        ORDER BY m.score DESC`,
-      [userId]
+      params
     )
     return rows
   },
@@ -393,8 +400,8 @@ export const db = {
        FROM matches m
        JOIN users ua ON ua.id = m.user_a_id
        JOIN users ub ON ub.id = m.user_b_id
-       LEFT JOIN profiles pa ON pa.user_id = m.user_a_id
-       LEFT JOIN profiles pb ON pb.user_id = m.user_b_id
+       LEFT JOIN profiles pa ON pa.id = m.profile_a_id
+       LEFT JOIN profiles pb ON pb.id = m.profile_b_id
        WHERE m.id = $1`,
       [matchId]
     )

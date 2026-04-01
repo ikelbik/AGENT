@@ -420,7 +420,9 @@ async function runMatchingForProfile(userId, profile, log) {
       candidate.user_id,
       combinedScore,
       conv.hypothesis,
-      conv.transcript || []
+      conv.transcript || [],
+      profile.id,
+      candidate.id
     )
     log(`  MATCH created ${match.id.slice(0,8)}`)
 
