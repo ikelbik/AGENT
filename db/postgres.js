@@ -157,28 +157,38 @@ export const db = {
   // Find candidates without embedding (fallback)
   async findCandidatesWithoutEmbedding(userId, limit = 50) {
     // Debug: count why candidates are excluded
-    const { rows: debug } = await pool.query(
-      `SELECT
-         COUNT(*) FILTER (WHERE p.user_id != $1)                                           AS total_other,
-         COUNT(*) FILTER (WHERE p.user_id != $1 AND p.profile_confirmed = TRUE)            AS confirmed,
-         COUNT(*) FILTER (WHERE p.user_id != $1 AND p.profile_confirmed = TRUE
-                            AND p.matching_active = TRUE)                                  AS active,
-         COUNT(*) FILTER (WHERE p.user_id != $1 AND p.profile_confirmed = TRUE
-                            AND p.matching_active = TRUE
-                            AND NOT EXISTS (
-                              SELECT 1 FROM matches m
-                              WHERE ((m.user_a_id = $1 AND m.user_b_id = p.user_id)
-                                  OR (m.user_b_id = $1 AND m.user_a_id = p.user_id))
-                                AND m.created_at > COALESCE(
-                                  (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1),
-                                  '1970-01-01'::timestamptz)
-                                AND m.created_at > COALESCE(p.profile_updated_at, '1970-01-01'::timestamptz)
-                            ))                                                             AS after_dedup
-       FROM profiles p`,
-      [userId]
-    )
-    const d = debug[0]
-    console.log(`[db:candidates] user=${userId.slice(0,8)} other=${d.total_other} confirmed=${d.confirmed} active=${d.active} after_dedup=${d.after_dedup}`)
+    try {
+      const { rows: d1 } = await pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE user_id != $1)                                        AS total_other,
+           COUNT(*) FILTER (WHERE user_id != $1 AND profile_confirmed = TRUE)           AS confirmed,
+           COUNT(*) FILTER (WHERE user_id != $1 AND profile_confirmed = TRUE
+                              AND matching_active = TRUE)                               AS active
+         FROM profiles`,
+        [userId]
+      )
+      const { rows: d2 } = await pool.query(
+        `SELECT COUNT(*) AS after_dedup
+         FROM profiles p
+         WHERE p.user_id != $1
+           AND p.profile_confirmed = TRUE
+           AND p.matching_active = TRUE
+           AND NOT EXISTS (
+             SELECT 1 FROM matches m
+             WHERE ((m.user_a_id = $1 AND m.user_b_id = p.user_id)
+                 OR (m.user_b_id = $1 AND m.user_a_id = p.user_id))
+               AND m.created_at > COALESCE(
+                 (SELECT profile_updated_at FROM profiles s WHERE s.user_id = $1 LIMIT 1),
+                 '1970-01-01'::timestamptz)
+               AND m.created_at > COALESCE(p.profile_updated_at, '1970-01-01'::timestamptz)
+           )`,
+        [userId]
+      )
+      const d = d1[0]
+      console.log(`[db:candidates] user=${userId.slice(0,8)} other=${d.total_other} confirmed=${d.confirmed} active=${d.active} after_dedup=${d2[0].after_dedup}`)
+    } catch (e) {
+      console.error(`[db:candidates] debug query failed:`, e.message)
+    }
 
     const { rows } = await pool.query(
       `SELECT p.*, u.telegram_id, u.username

@@ -21,7 +21,13 @@ new Worker('matching', async (job) => {
   const { userId } = job.data
   console.log(`[matching] Running for user ${userId}`)
 
-  const results = await runMatching(userId)
+  let results
+  try {
+    results = await runMatching(userId)
+  } catch (e) {
+    console.error(`[matching] CRASH for ${userId}:`, e.message, e.stack?.split('\n')[1])
+    return
+  }
 
   if (results.error) {
     console.warn(`[matching] Error: ${results.error}`)
