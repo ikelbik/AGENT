@@ -39,18 +39,24 @@ function parseTelegramInitData(initData) {
       .join('\n')
 
     const secretKey = crypto.createHmac('sha256', 'WebAppData')
-      .update(process.env.BOT_TOKEN || '')
+      .update(process.env.TELEGRAM_BOT_TOKEN || '')
       .digest()
 
     const expectedHash = crypto.createHmac('sha256', secretKey)
       .update(checkString)
       .digest('hex')
 
-    if (expectedHash !== hash) return null
+    if (expectedHash !== hash) {
+      console.warn('[auth] hash mismatch — check BOT_TOKEN env var')
+      return null
+    }
 
     const userStr = params.get('user')
     return userStr ? JSON.parse(userStr) : null
-  } catch { return null }
+  } catch (e) {
+    console.error('[auth] parse error:', e.message)
+    return null
+  }
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
@@ -89,8 +95,16 @@ app.post('/api/auth', async (req, res) => {
       return res.json({ userId: req.body.devUserId, profile })
     }
 
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      console.error('[auth] BOT_TOKEN is not set!')
+      return res.status(500).json({ error: 'Server misconfiguration: BOT_TOKEN missing' })
+    }
+
     const tgUser = parseTelegramInitData(initData)
-    if (!tgUser) return res.status(401).json({ error: 'Unauthorized' })
+    if (!tgUser) {
+      console.warn('[auth] initData invalid, length:', initData?.length)
+      return res.status(401).json({ error: 'Invalid Telegram auth data' })
+    }
 
     const user    = await db.upsertUser(tgUser.id, tgUser.username)
     const profile = await db.getProfile(user.id)
