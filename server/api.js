@@ -3,7 +3,7 @@ import crypto  from 'crypto'
 import { fileURLToPath } from 'url'
 import { dirname, join }  from 'path'
 
-import { db }                from '../db/postgres.js'
+import { db, pool }          from '../db/postgres.js'
 import { conductOnboarding } from '../agent/onboarding.js'
 import { agentAnswerQuestion } from '../agent/matching.js'
 import { scheduleMatching }  from '../queue/queues.js'
@@ -129,7 +129,7 @@ app.get('/api/profile', auth, async (req, res) => {
   }
 })
 
-// Reset profile
+// Reset profile (legacy — resets active agent)
 app.post('/api/profile/reset', auth, async (req, res) => {
   try {
     await db.resetProfile(req.userId)
@@ -139,17 +139,80 @@ app.post('/api/profile/reset', auth, async (req, res) => {
   }
 })
 
+// ─── Agents ───────────────────────────────────────────────────────────────────
+
+// List agents
+app.get('/api/agents', auth, async (req, res) => {
+  try {
+    const agents = await db.getAgents(req.userId)
+    res.json({ agents })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Create agent
+app.post('/api/agents', auth, async (req, res) => {
+  try {
+    const { name } = req.body
+    const agent = await db.createAgent(req.userId, name || 'Новый агент')
+    res.json({ agent })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Set active agent
+app.put('/api/agents/:agentId/activate', auth, async (req, res) => {
+  try {
+    await db.setActiveAgent(req.userId, req.params.agentId)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Delete agent
+app.delete('/api/agents/:agentId', auth, async (req, res) => {
+  try {
+    await db.deleteAgent(req.params.agentId)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Reset specific agent
+app.post('/api/agents/:agentId/reset', auth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM conversations WHERE agent_id = $1', [req.params.agentId])
+    await db.upsertProfile(req.userId, {
+      onboarding_phase: 0, onboarding_data: '{}',
+      profile_confirmed: false, matching_active: false,
+      persona_ref: null, showcase_public: null
+    }, req.params.agentId)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // Onboarding chat
 app.post('/api/chat', auth, async (req, res) => {
   try {
-    const { message } = req.body
+    const { message, agentId } = req.body
     if (!message?.trim()) return res.status(400).json({ error: 'Empty message' })
 
-    const result = await conductOnboarding(req.userId, message)
+    const result = await conductOnboarding(req.userId, message, agentId || null)
 
     if (result.finalPhase) {
-      await db.confirmProfile(req.userId)
-      await scheduleMatching(req.userId)
+      const aid = agentId || (await db.getProfile(req.userId))?.id
+      if (aid) {
+        await db.upsertProfile(req.userId, {
+          profile_confirmed: true, matching_active: true, profile_updated_at: new Date()
+        }, aid)
+        await scheduleMatching(req.userId)
+      }
     }
 
     res.json(result)

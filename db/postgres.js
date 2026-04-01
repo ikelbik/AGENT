@@ -28,41 +28,100 @@ export const db = {
     return rows[0] || null
   },
 
+  // Get active profile for user (for matching / bot compat)
   async getProfile(userId) {
     const { rows } = await pool.query(
-      'SELECT * FROM profiles WHERE user_id = $1',
+      `SELECT * FROM profiles WHERE user_id = $1 ORDER BY is_active DESC, created_at ASC LIMIT 1`,
       [userId]
     )
     return rows[0] || null
   },
 
-  async upsertProfile(userId, data) {
+  // Get specific agent by id
+  async getProfileById(agentId) {
+    const { rows } = await pool.query('SELECT * FROM profiles WHERE id = $1', [agentId])
+    return rows[0] || null
+  },
+
+  // Get all agents for user
+  async getAgents(userId) {
+    const { rows } = await pool.query(
+      `SELECT * FROM profiles WHERE user_id = $1 ORDER BY created_at ASC`,
+      [userId]
+    )
+    return rows
+  },
+
+  // Create a new agent (blank profile)
+  async createAgent(userId, name = 'Новый агент') {
+    const existing = await this.getAgents(userId)
+    const isFirst  = existing.length === 0
+    const { rows } = await pool.query(
+      `INSERT INTO profiles (user_id, agent_name, is_active, onboarding_phase, onboarding_data)
+       VALUES ($1, $2, $3, 0, '{}') RETURNING *`,
+      [userId, name, isFirst]
+    )
+    return rows[0]
+  },
+
+  // Set active agent (one active per user)
+  async setActiveAgent(userId, agentId) {
+    await pool.query('UPDATE profiles SET is_active = FALSE WHERE user_id = $1', [userId])
+    await pool.query('UPDATE profiles SET is_active = TRUE  WHERE id = $1', [agentId])
+  },
+
+  // Delete agent
+  async deleteAgent(agentId) {
+    await pool.query('DELETE FROM profiles WHERE id = $1', [agentId])
+  },
+
+  async upsertProfile(userId, data, agentId = null) {
     const keys = Object.keys(data)
     const values = Object.values(data)
     const setClauses = keys.map((k, i) => `${k} = $${i + 2}`).join(', ')
+
+    // If agentId given — update that specific agent
+    if (agentId) {
+      const { rows } = await pool.query(
+        `UPDATE profiles SET ${setClauses}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [agentId, ...values]
+      )
+      return rows[0]
+    }
+
+    // Legacy: find existing profile and update, or insert first one
+    const existing = await this.getProfile(userId)
+    if (existing) {
+      const { rows } = await pool.query(
+        `UPDATE profiles SET ${setClauses}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [existing.id, ...values]
+      )
+      return rows[0]
+    }
+
+    // No profile yet — create first one (active)
     const { rows } = await pool.query(
-      `INSERT INTO profiles (user_id, ${keys.join(', ')})
-       VALUES ($1, ${keys.map((_, i) => `$${i + 2}`).join(', ')})
-       ON CONFLICT (user_id) DO UPDATE SET ${setClauses}, updated_at = NOW()
+      `INSERT INTO profiles (user_id, is_active, ${keys.join(', ')})
+       VALUES ($1, TRUE, ${keys.map((_, i) => `$${i + 2}`).join(', ')})
        RETURNING *`,
       [userId, ...values]
     )
     return rows[0]
   },
 
-  async saveConversation(userId, role, content, metadata = {}) {
+  async saveConversation(userId, role, content, metadata = {}, agentId = null) {
     await pool.query(
-      'INSERT INTO conversations (user_id, role, content, metadata) VALUES ($1, $2, $3, $4)',
-      [userId, role, content, metadata]
+      'INSERT INTO conversations (user_id, role, content, metadata, agent_id) VALUES ($1, $2, $3, $4, $5)',
+      [userId, role, content, metadata, agentId]
     )
   },
 
-  async getRecentConversation(userId, limit = 20) {
+  async getRecentConversation(userId, limit = 20, agentId = null) {
     const { rows } = await pool.query(
       `SELECT role, content FROM conversations
-       WHERE user_id = $1
+       WHERE user_id = $1 AND agent_id ${agentId ? '= $3' : 'IS NULL'}
        ORDER BY created_at DESC LIMIT $2`,
-      [userId, limit]
+      agentId ? [userId, limit, agentId] : [userId, limit]
     )
     return rows.reverse()
   },
