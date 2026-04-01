@@ -45,6 +45,12 @@ export async function startMatchingScheduler() {
     ? Math.max(60000, parseInt(process.env.MATCHING_INTERVAL_MS))
     : parseFloat(process.env.MATCHING_INTERVAL_HOURS || '24') * 60 * 60 * 1000
 
+  // Remove all existing repeatable jobs to avoid stale schedules from previous deploys
+  const repeatables = await schedulerQueue.getRepeatableJobs()
+  for (const job of repeatables) {
+    await schedulerQueue.removeRepeatableByKey(job.key)
+  }
+
   await schedulerQueue.add('match-all', {}, {
     repeat: { every: intervalMs },
     jobId: 'periodic-match-all'
