@@ -22,10 +22,16 @@ const WEIGHTS = {
   mentor:   { values: 0.18, comm: 0.14, compl: 0.22, stage: 0.14, domain: 0.22, openness: 0.10 }
 }
 
-export function scoreCompatibility(profileA, profileB) {
+export function scoreCompatibility(profileA, profileB, log = () => {}) {
   // Hard deterministic filters before scoring
-  if (!isOrientationCompatible(profileA, profileB)) return { score: 0, dimensions: {}, action: 'skip' }
-  if (!isRelationshipFormatCompatible(profileA, profileB)) return { score: 0, dimensions: {}, action: 'skip' }
+  if (!isOrientationCompatible(profileA, profileB)) {
+    log(`    orientation mismatch: A(gender=${profileA.gender} orient=${profileA.orientation} pref=${profileA.partner_gender_preference}) B(gender=${profileB.gender} orient=${profileB.orientation} pref=${profileB.partner_gender_preference})`)
+    return { score: 0, dimensions: {}, action: 'skip', reason: 'orientation' }
+  }
+  if (!isRelationshipFormatCompatible(profileA, profileB)) {
+    log(`    format mismatch: A=${profileA.relationship_format} B=${profileB.relationship_format}`)
+    return { score: 0, dimensions: {}, action: 'skip', reason: 'format' }
+  }
 
   const goalType = normalizeGoal(profileA.goal_type)
   const w = WEIGHTS[goalType] || WEIGHTS.business
@@ -61,12 +67,20 @@ export function scoreCompatibility(profileA, profileB) {
   // For romantic goal — blend in intimate + physical compatibility
   if (goalType === 'romantic') {
     const intimateScore = intimateCompatibilityScore(profileA, profileB)
-    if (intimateScore === 0) return { score: 0, dimensions, action: 'skip' }
+    if (intimateScore === 0) {
+      log(`    intimate dealbreaker: A.tags=${JSON.stringify(profileA.intimate_tags)} B.db=${JSON.stringify(profileB.intimate_dealbreakers)} / B.tags=${JSON.stringify(profileB.intimate_tags)} A.db=${JSON.stringify(profileA.intimate_dealbreakers)}`)
+      return { score: 0, dimensions, action: 'skip', reason: 'intimate_dealbreaker' }
+    }
 
-    const physScore = (physicalPreferencesScore(profileA, profileB) +
-                       physicalPreferencesScore(profileB, profileA)) / 2
-    if (physScore === 0) return { score: 0, dimensions, action: 'skip' }
+    const physScoreAB = physicalPreferencesScore(profileA, profileB)
+    const physScoreBA = physicalPreferencesScore(profileB, profileA)
+    const physScore   = (physScoreAB + physScoreBA) / 2
+    if (physScore === 0) {
+      log(`    physical mismatch: A→B=${physScoreAB.toFixed(2)} B→A=${physScoreBA.toFixed(2)} | A.prefs=${JSON.stringify(profileA.physical_preferences)} B.self=${JSON.stringify(profileB.physical_self)} | B.prefs=${JSON.stringify(profileB.physical_preferences)} A.self=${JSON.stringify(profileA.physical_self)}`)
+      return { score: 0, dimensions, action: 'skip', reason: 'physical' }
+    }
 
+    log(`    intimate=${intimateScore.toFixed(2)} phys=${physScore.toFixed(2)}`)
     totalScore = totalScore * 0.65 + intimateScore * 0.20 + physScore * 0.15
   }
 
@@ -202,22 +216,35 @@ async function passesHardFilters(profileA, profileB, log = () => {}) {
 
 // ─── Find candidates ──────────────────────────────────────────────────────────
 
-export async function findCandidates(userId, profile) {
+export async function findCandidates(userId, profile, log = () => {}) {
   const candidates = await db.findCandidatesWithoutEmbedding(userId, 50)
+  log(`  DB returned ${candidates.length} raw candidates`)
 
-  // Filter by goal type compatibility first (cheap, no API calls)
-  const goalFiltered = candidates.filter(c =>
-    isGoalCompatible(profile.goal_type, c.goal_type)
-  )
+  if (candidates.length === 0) return []
 
-  // Score and sort
-  const scored = goalFiltered
-    .map(c => ({ ...c, scoring: scoreCompatibility(profile, c) }))
-    .filter(c => c.scoring.action !== 'skip')
-    .sort((a, b) => b.scoring.score - a.scoring.score)
-    .slice(0, 10)
+  // Filter by goal type compatibility
+  const goalFiltered = candidates.filter(c => {
+    const ok = isGoalCompatible(profile.goal_type, c.goal_type)
+    if (!ok) log(`  SKIP ${c.user_id?.slice(0,8)} — goal mismatch: A=${profile.goal_type} B=${c.goal_type}`)
+    return ok
+  })
+  log(`  after goal filter: ${goalFiltered.length}`)
 
-  return scored
+  // Score each and log reason for skip
+  const scored = []
+  for (const c of goalFiltered) {
+    const cid = c.user_id?.slice(0, 8)
+    const scoring = scoreCompatibility(profile, c, (...a) => log(`  [${cid}]`, ...a))
+    if (scoring.action === 'skip') {
+      log(`  SKIP ${cid} — reason=${scoring.reason || 'score'} (${scoring.score.toFixed(2)}) goal=${c.goal_type} gender=${c.gender} orient=${c.orientation}`)
+    } else {
+      log(`  OK   ${cid} — score=${scoring.score.toFixed(2)} action=${scoring.action}`)
+      scored.push({ ...c, scoring })
+    }
+  }
+
+  log(`  after scoring: ${scored.length} pass`)
+  return scored.sort((a, b) => b.scoring.score - a.scoring.score).slice(0, 10)
 }
 
 // ─── Agent-to-agent conversation (two independent agents) ────────────────────
@@ -368,10 +395,10 @@ export async function runMatching(userId) {
 }
 
 async function runMatchingForProfile(userId, profile, log) {
-  log('profile ok — goal:', profile.goal_type, '| persona:', !!profile.persona_ref)
+  log(`profile: goal=${profile.goal_type} gender=${profile.gender} orient=${profile.orientation} format=${profile.relationship_format} persona=${!!profile.persona_ref}`)
 
-  const candidates = await findCandidates(userId, profile)
-  log(`candidates after DB query: ${candidates.length}`)
+  const candidates = await findCandidates(userId, profile, log)
+  log(`candidates ready: ${candidates.length}`)
 
   if (candidates.length === 0) {
     return { found: 0, matches: [] }
