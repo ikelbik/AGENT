@@ -348,11 +348,26 @@ ${targetPersona}`,
 export async function runMatching(userId) {
   const log = (...args) => console.log(`[match:${userId.slice(0,8)}]`, ...args)
 
-  const profile = await db.getProfile(userId)
-  if (!profile || !profile.profile_confirmed) {
-    log('SKIP — profile incomplete, confirmed:', profile?.profile_confirmed)
-    return { error: 'Профиль не завершён' }
+  const agents = await db.getAgents(userId)
+  const confirmed = agents.filter(a => a.profile_confirmed && a.matching_active)
+
+  if (confirmed.length === 0) {
+    log('SKIP — no confirmed agents')
+    return { error: 'Нет готовых агентов' }
   }
+
+  log(`running for ${confirmed.length} agent(s)`)
+
+  const allResults = { found: 0, matches: [] }
+  for (const profile of confirmed) {
+    const r = await runMatchingForProfile(userId, profile, log)
+    allResults.found   += r.found   || 0
+    allResults.matches.push(...(r.matches || []))
+  }
+  return allResults
+}
+
+async function runMatchingForProfile(userId, profile, log) {
   log('profile ok — goal:', profile.goal_type, '| persona:', !!profile.persona_ref)
 
   const candidates = await findCandidates(userId, profile)
