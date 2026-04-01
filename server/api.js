@@ -100,14 +100,19 @@ app.post('/api/auth', async (req, res) => {
       return res.status(500).json({ error: 'Server misconfiguration: BOT_TOKEN missing' })
     }
 
+    console.log('[auth] parsing initData, length:', initData?.length)
     const tgUser = parseTelegramInitData(initData)
     if (!tgUser) {
       console.warn('[auth] initData invalid, length:', initData?.length)
       return res.status(401).json({ error: 'Invalid Telegram auth data' })
     }
+    console.log('[auth] tgUser:', tgUser.id, tgUser.username)
 
+    console.log('[auth] upserting user...')
     const user    = await db.upsertUser(tgUser.id, tgUser.username)
+    console.log('[auth] user ok:', user.id)
     const profile = await db.getProfile(user.id)
+    console.log('[auth] profile ok, confirmed:', profile?.profile_confirmed)
     res.json({ userId: user.id, profile })
   } catch (e) {
     res.status(500).json({ error: e.message })
