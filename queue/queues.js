@@ -40,12 +40,11 @@ export async function scheduleNotification(telegramId, message, extra = {}) {
 export const schedulerQueue = new Queue('scheduler', { connection })
 
 export async function startMatchingScheduler() {
-  // MATCHING_INTERVAL_MS takes priority (for testing), fallback to hours
   const intervalMs = process.env.MATCHING_INTERVAL_MS
-    ? Math.max(60000, parseInt(process.env.MATCHING_INTERVAL_MS))
+    ? parseInt(process.env.MATCHING_INTERVAL_MS)
     : parseFloat(process.env.MATCHING_INTERVAL_HOURS || '24') * 60 * 60 * 1000
 
-  // Remove all existing repeatable jobs to avoid stale schedules from previous deploys
+  // Remove all existing repeatable jobs so stale intervals don't persist across deploys
   const repeatables = await schedulerQueue.getRepeatableJobs()
   for (const job of repeatables) {
     await schedulerQueue.removeRepeatableByKey(job.key)
