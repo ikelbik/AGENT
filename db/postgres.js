@@ -142,7 +142,7 @@ export const db = {
            WHERE ((m.user_a_id = $1 AND m.user_b_id = p.user_id)
                OR (m.user_b_id = $1 AND m.user_a_id = p.user_id))
              AND m.created_at > COALESCE(
-               (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1),
+               (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1 ORDER BY profile_updated_at DESC NULLS LAST LIMIT 1),
                '1970-01-01'::timestamptz
              )
              AND m.created_at > COALESCE(p.profile_updated_at, '1970-01-01'::timestamptz)
@@ -202,7 +202,7 @@ export const db = {
            WHERE ((m.user_a_id = $1 AND m.user_b_id = p.user_id)
                OR (m.user_b_id = $1 AND m.user_a_id = p.user_id))
              AND m.created_at > COALESCE(
-               (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1),
+               (SELECT profile_updated_at FROM profiles self WHERE self.user_id = $1 ORDER BY profile_updated_at DESC NULLS LAST LIMIT 1),
                '1970-01-01'::timestamptz
              )
              AND m.created_at > COALESCE(p.profile_updated_at, '1970-01-01'::timestamptz)
