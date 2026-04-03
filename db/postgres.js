@@ -385,16 +385,22 @@ export const db = {
   // ─── Matches ────────────────────────────────────────────────────────────────
 
   async createMatch(userAId, userBId, score, hypothesis, conversation, profileAId = null, profileBId = null) {
+    // Normalize order so (A,B) and (B,A) always resolve to the same row
+    const [aId, bId, pAId, pBId] = userAId < userBId
+      ? [userAId, userBId, profileAId, profileBId]
+      : [userBId, userAId, profileBId, profileAId]
+
     const { rows } = await pool.query(
       `INSERT INTO matches (user_a_id, user_b_id, score, hypothesis, conversation, profile_a_id, profile_b_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_a_id, user_b_id) DO UPDATE
-         SET score = EXCLUDED.score, hypothesis = EXCLUDED.hypothesis,
+         SET score = GREATEST(matches.score, EXCLUDED.score),
+             hypothesis = EXCLUDED.hypothesis,
              conversation = EXCLUDED.conversation,
              profile_a_id = EXCLUDED.profile_a_id, profile_b_id = EXCLUDED.profile_b_id,
              updated_at = NOW()
        RETURNING *`,
-      [userAId, userBId, score, hypothesis, JSON.stringify(conversation), profileAId, profileBId]
+      [aId, bId, score, hypothesis, JSON.stringify(conversation), pAId, pBId]
     )
     return rows[0]
   },
@@ -474,6 +480,7 @@ export const db = {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [matchId, sender, content, routed]
     )
+    await pool.query('UPDATE matches SET updated_at = NOW() WHERE id = $1', [matchId])
     return rows[0]
   },
 

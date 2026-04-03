@@ -298,7 +298,8 @@ app.post('/api/match/:matchId/reply', auth, async (req, res) => {
   try {
     const { text } = req.body
     if (!text?.trim()) return res.status(400).json({ error: 'Empty reply' })
-    const msg = await db.addMatchMessage(req.params.matchId, req.userId, text, false)
+    // Prefix with 'human:' to distinguish direct human replies from agent answers
+    const msg = await db.addMatchMessage(req.params.matchId, `human:${req.userId}`, text, false)
     res.json({ message: msg })
   } catch (e) {
     res.status(500).json({ error: e.message })
