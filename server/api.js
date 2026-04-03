@@ -256,6 +256,16 @@ app.get('/api/match/:matchId', auth, async (req, res) => {
   }
 })
 
+// Get match messages
+app.get('/api/match/:matchId/messages', auth, async (req, res) => {
+  try {
+    const messages = await db.getMatchMessages(req.params.matchId)
+    res.json({ messages })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // Ask agent a question on behalf of match candidate
 app.post('/api/match/:matchId/ask', auth, async (req, res) => {
   try {
@@ -265,19 +275,31 @@ app.post('/api/match/:matchId/ask', auth, async (req, res) => {
     const match = await db.getMatch(req.params.matchId)
     if (!match) return res.status(404).json({ error: 'Not found' })
 
-    const isA         = String(match.user_a_id) === String(req.userId)
+    const isA           = String(match.user_a_id) === String(req.userId)
     const targetPersona = isA
       ? (match.persona_b || match.showcase_b || '')
       : (match.persona_a || match.showcase_a || '')
 
     const result = await agentAnswerQuestion(question, targetPersona)
 
-    await db.addMatchMessage(req.params.matchId, req.userId, question, false)
+    await db.addMatchMessage(req.params.matchId, req.userId, question, result.routed)
     if (!result.routed) {
       await db.addMatchMessage(req.params.matchId, 'agent', result.answer, false)
     }
 
     res.json(result)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Reply to a routed question (counterpart answers directly)
+app.post('/api/match/:matchId/reply', auth, async (req, res) => {
+  try {
+    const { text } = req.body
+    if (!text?.trim()) return res.status(400).json({ error: 'Empty reply' })
+    const msg = await db.addMatchMessage(req.params.matchId, req.userId, text, false)
+    res.json({ message: msg })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
