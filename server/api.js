@@ -1,4 +1,5 @@
 import express from 'express'
+import crypto  from 'crypto'
 import { db, pool }          from '../db/postgres.js'
 import { conductOnboarding } from '../agent/onboarding.js'
 import { agentAnswerQuestion } from '../agent/matching.js'
@@ -41,13 +42,34 @@ async function auth(req, res, next) {
   }
 }
 
+// ─── Owner hash ───────────────────────────────────────────────────────────────
+
+function ownerHash(telegramId) {
+  if (!telegramId) return null
+  const salt = process.env.OWNER_HASH_SALT || 'agentnet'
+  return crypto.createHash('sha256').update(salt + String(telegramId)).digest('hex')
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
-// Create agent — open endpoint, returns new UUID that client stores locally
+// Get all agents by owner hash — lets any device recover agents via Telegram ID
+app.get('/api/agents', async (req, res) => {
+  try {
+    const hash = req.query.owner
+    if (!hash) return res.json({ agents: [] })
+    const agents = await db.getAgentsByOwner(hash)
+    res.json({ agents })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Create agent
 app.post('/api/agents', async (req, res) => {
   try {
-    const { name } = req.body
-    const agent = await db.createAgent(name || 'Агент')
+    const { name, telegramId } = req.body
+    const hash  = ownerHash(telegramId)
+    const agent = await db.createAgent(name || 'Агент', hash)
     res.json({ agent })
   } catch (e) {
     res.status(500).json({ error: e.message })

@@ -10,13 +10,21 @@ export const db = {
 
   // ─── Agents ─────────────────────────────────────────────────────────────────
 
-  async createAgent(name = 'Агент') {
+  async createAgent(name = 'Агент', ownerHash = null) {
     const { rows } = await pool.query(
-      `INSERT INTO agents (agent_name, onboarding_phase, onboarding_data)
-       VALUES ($1, 0, '{}') RETURNING *`,
-      [name]
+      `INSERT INTO agents (agent_name, owner_hash, onboarding_phase, onboarding_data)
+       VALUES ($1, $2, 0, '{}') RETURNING *`,
+      [name, ownerHash]
     )
     return rows[0]
+  },
+
+  async getAgentsByOwner(ownerHash) {
+    const { rows } = await pool.query(
+      `SELECT * FROM agents WHERE owner_hash = $1 ORDER BY created_at ASC`,
+      [ownerHash]
+    )
+    return rows
   },
 
   async getAgentById(agentId) {
