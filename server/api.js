@@ -28,7 +28,7 @@ async function auth(req, res, next) {
     return next()
   }
 
-  const agentId = req.headers['x-agent-id'] || req.body?.agentId
+  const agentId = req.headers['x-agent-id'] || req.query?.agentId || req.body?.agentId
   if (!agentId) return res.status(401).json({ error: 'Missing X-Agent-Id' })
 
   try {
