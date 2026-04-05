@@ -3,7 +3,7 @@ import { db } from '../db/postgres.js'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-export async function updateProfileEmbedding() {} // stub — embedding removed
+export async function updateProfileEmbedding() {} // stub
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
@@ -50,19 +50,16 @@ PERSONA_REF:Я — [3–5 предложений от первого лица: �
 
 // ─── Main onboarding function ─────────────────────────────────────────────────
 
-export async function conductOnboarding(userId, userMessage, agentId = null) {
-  const profile = agentId
-    ? await db.getProfileById(agentId)
-    : await db.getProfile(userId)
+export async function conductOnboarding(agentId, userMessage) {
+  const agent = await db.getAgentById(agentId)
+  if (!agent) throw new Error('Agent not found')
 
-  const effectiveAgentId = agentId || profile?.id || null
-
-  if (profile?.onboarding_phase === 8) {
+  if (agent.onboarding_phase === 8) {
     return { done: true, message: null }
   }
 
-  const history   = await db.getRecentConversation(userId, 40, effectiveAgentId)
-  const knownData = profile?.onboarding_data || {}
+  const history   = await db.getOnboardingHistory(agentId, 40)
+  const knownData = agent.onboarding_data || {}
 
   const knownStr = Object.keys(knownData).length > 0
     ? `\n\nУЖЕ ИЗВЕСТНО О ПОЛЬЗОВАТЕЛЕ:\n${JSON.stringify(knownData, null, 2)}`
@@ -80,8 +77,8 @@ export async function conductOnboarding(userId, userMessage, agentId = null) {
 
   const raw = response.content[0].text
 
-  const isDone = /DONE\n/.test(raw) || raw.includes('\nDONE')
-  const dataMatch = isDone ? raw.match(/DATA:(\{.+?\})\s*\n?PERSONA_REF:/s) || raw.match(/DATA:(\{[^\n]+\})/) : null
+  const isDone      = /DONE\n/.test(raw) || raw.includes('\nDONE')
+  const dataMatch   = isDone ? raw.match(/DATA:(\{.+?\})\s*\n?PERSONA_REF:/s) || raw.match(/DATA:(\{[^\n]+\})/) : null
   const personaMatch = isDone ? raw.match(/PERSONA_REF:([\s\S]+)$/) : null
 
   const cleanText = raw
@@ -92,30 +89,29 @@ export async function conductOnboarding(userId, userMessage, agentId = null) {
   let newData = { ...knownData }
   if (isDone && dataMatch) {
     try {
-      const extracted = JSON.parse(dataMatch[1])
-      newData = { ...knownData, ...extracted }
+      newData = { ...knownData, ...JSON.parse(dataMatch[1]) }
     } catch (e) {
       console.error('DATA parse error:', dataMatch?.[1], e.message)
     }
   }
 
-  await db.saveConversation(userId, 'user',      userMessage, {}, effectiveAgentId)
-  await db.saveConversation(userId, 'assistant', cleanText,   {}, effectiveAgentId)
+  await db.saveOnboardingMessage(agentId, 'user',      userMessage)
+  await db.saveOnboardingMessage(agentId, 'assistant', cleanText)
 
   if (isDone && personaMatch) {
     const personaRef = personaMatch[1].trim()
-    await finalizeProfile(userId, newData, personaRef, effectiveAgentId)
+    await finalizeProfile(agentId, newData, personaRef)
     return { done: false, finalPhase: true, message: cleanText, personaRef }
   }
 
-  await db.upsertProfile(userId, { onboarding_phase: 1, onboarding_data: newData }, effectiveAgentId)
+  await db.updateAgent(agentId, { onboarding_phase: 1, onboarding_data: newData })
 
   return { done: false, message: cleanText }
 }
 
 // ─── Finalize profile ─────────────────────────────────────────────────────────
 
-async function finalizeProfile(userId, data, personaRef, agentId = null) {
+async function finalizeProfile(agentId, data, personaRef) {
   const fields = {
     goal_type:                data.goal_type,
     archetype_tags:           data.archetype_tags,
@@ -141,7 +137,6 @@ async function finalizeProfile(userId, data, personaRef, agentId = null) {
     profile_updated_at:       new Date()
   }
 
-  // Drop undefined — let DB keep existing values
   const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
-  await db.upsertProfile(userId, clean, agentId)
+  await db.updateAgent(agentId, clean)
 }

@@ -1,14 +1,9 @@
 import express from 'express'
-import crypto  from 'crypto'
-import { fileURLToPath } from 'url'
-import { dirname, join }  from 'path'
-
 import { db, pool }          from '../db/postgres.js'
 import { conductOnboarding } from '../agent/onboarding.js'
 import { agentAnswerQuestion } from '../agent/matching.js'
 import { scheduleMatching }  from '../queue/queues.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -16,164 +11,64 @@ app.use((req, res, next) => {
   const allowed = process.env.CORS_ORIGIN || '*'
   res.setHeader('Access-Control-Allow-Origin',  allowed)
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Telegram-Init-Data,X-Dev-User-Id')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Agent-Id,X-Dev-Agent-Id')
   if (req.method === 'OPTIONS') return res.sendStatus(204)
   next()
 })
 
 app.use(express.json())
 
-// ─── Telegram init data validation ───────────────────────────────────────────
-
-function parseTelegramInitData(initData) {
-  if (!initData) return null
-  try {
-    const params = new URLSearchParams(initData)
-    const hash   = params.get('hash')
-    if (!hash) return null
-
-    params.delete('hash')
-    const checkString = [...params.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}=${v}`)
-      .join('\n')
-
-    const secretKey = crypto.createHmac('sha256', 'WebAppData')
-      .update(process.env.TELEGRAM_BOT_TOKEN || '')
-      .digest()
-
-    const expectedHash = crypto.createHmac('sha256', secretKey)
-      .update(checkString)
-      .digest('hex')
-
-    if (expectedHash !== hash) {
-      console.warn('[auth] hash mismatch — check BOT_TOKEN env var')
-      return null
-    }
-
-    const userStr = params.get('user')
-    return userStr ? JSON.parse(userStr) : null
-  } catch (e) {
-    console.error('[auth] parse error:', e.message)
-    return null
-  }
-}
-
-// ─── Auth middleware ──────────────────────────────────────────────────────────
+// ─── Auth middleware ───────────────────────────────────────────────────────────
+// Auth = agent UUID sent as X-Agent-Id header. No personal data stored.
 
 async function auth(req, res, next) {
-  const initData = req.headers['x-telegram-init-data'] || req.body?.initData
-
-  // Dev mode fallback
-  if (process.env.NODE_ENV !== 'production' && req.headers['x-dev-user-id']) {
-    req.userId = req.headers['x-dev-user-id']
+  // Dev mode
+  if (process.env.NODE_ENV !== 'production' && req.headers['x-dev-agent-id']) {
+    req.agentId = req.headers['x-dev-agent-id']
     return next()
   }
 
-  const tgUser = parseTelegramInitData(initData)
-  if (!tgUser) return res.status(401).json({ error: 'Unauthorized' })
+  const agentId = req.headers['x-agent-id'] || req.body?.agentId
+  if (!agentId) return res.status(401).json({ error: 'Missing X-Agent-Id' })
 
   try {
-    const user = await db.upsertUser(tgUser.id, tgUser.username)
-    req.userId = user.id
+    const agent = await db.getAgentById(agentId)
+    if (!agent) return res.status(401).json({ error: 'Unknown agent' })
+    req.agentId = agentId
     next()
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 }
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-
-// Auth — get or create user, return profile
-app.post('/api/auth', async (req, res) => {
-  try {
-    const { initData } = req.body
-
-    // Dev fallback
-    if (process.env.NODE_ENV !== 'production' && req.body.devUserId) {
-      const profile = await db.getProfile(req.body.devUserId)
-      return res.json({ userId: req.body.devUserId, profile })
-    }
-
-    if (!process.env.TELEGRAM_BOT_TOKEN) {
-      console.error('[auth] BOT_TOKEN is not set!')
-      return res.status(500).json({ error: 'Server misconfiguration: BOT_TOKEN missing' })
-    }
-
-    console.log('[auth] parsing initData, length:', initData?.length)
-    const tgUser = parseTelegramInitData(initData)
-    if (!tgUser) {
-      console.warn('[auth] initData invalid, length:', initData?.length)
-      return res.status(401).json({ error: 'Invalid Telegram auth data' })
-    }
-    console.log('[auth] tgUser:', tgUser.id, tgUser.username)
-
-    console.log('[auth] upserting user...')
-    const user    = await db.upsertUser(tgUser.id, tgUser.username)
-    console.log('[auth] user ok:', user.id)
-    const profile = await db.getProfile(user.id)
-    console.log('[auth] profile ok, confirmed:', profile?.profile_confirmed)
-    res.json({ userId: user.id, profile })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
-
-// Get profile
-app.get('/api/profile', auth, async (req, res) => {
-  try {
-    const profile = await db.getProfile(req.userId)
-    res.json({ profile })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
-
-// Reset profile (legacy — resets active agent)
-app.post('/api/profile/reset', auth, async (req, res) => {
-  try {
-    await db.resetProfile(req.userId)
-    res.json({ ok: true })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
-
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
-// List agents
-app.get('/api/agents', auth, async (req, res) => {
-  try {
-    const agents = await db.getAgents(req.userId)
-    res.json({ agents })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
-
-// Create agent
-app.post('/api/agents', auth, async (req, res) => {
+// Create agent — open endpoint, returns new UUID that client stores locally
+app.post('/api/agents', async (req, res) => {
   try {
     const { name } = req.body
-    const agent = await db.createAgent(req.userId, name || 'Новый агент')
+    const agent = await db.createAgent(name || 'Агент')
     res.json({ agent })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
 
-// Set active agent
-app.put('/api/agents/:agentId/activate', auth, async (req, res) => {
+// Get agent by ID — open endpoint (UUID is effectively the access token)
+app.get('/api/agents/:agentId', async (req, res) => {
   try {
-    await db.setActiveAgent(req.userId, req.params.agentId)
-    res.json({ ok: true })
+    const agent = await db.getAgentById(req.params.agentId)
+    if (!agent) return res.status(404).json({ error: 'Not found' })
+    res.json({ agent })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
 
-// Delete agent
+// Delete agent — must be the agent itself
 app.delete('/api/agents/:agentId', auth, async (req, res) => {
+  if (req.agentId !== req.params.agentId)
+    return res.status(403).json({ error: 'Forbidden' })
   try {
     await db.deleteAgent(req.params.agentId)
     res.json({ ok: true })
@@ -182,51 +77,59 @@ app.delete('/api/agents/:agentId', auth, async (req, res) => {
   }
 })
 
-// Toggle matching active for agent
+// Toggle matching active
 app.put('/api/agents/:agentId/matching', auth, async (req, res) => {
+  if (req.agentId !== req.params.agentId)
+    return res.status(403).json({ error: 'Forbidden' })
   try {
     const { active } = req.body
-    await pool.query(
-      'UPDATE profiles SET matching_active = $1, matching_stopped_at = $2 WHERE id = $3',
-      [active, active ? null : new Date(), req.params.agentId]
-    )
+    await db.setMatchingActive(req.params.agentId, !!active)
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
 
-// Reset specific agent
+// Reset agent — wipes profile + onboarding history
 app.post('/api/agents/:agentId/reset', auth, async (req, res) => {
+  if (req.agentId !== req.params.agentId)
+    return res.status(403).json({ error: 'Forbidden' })
   try {
-    await pool.query('DELETE FROM conversations WHERE agent_id = $1', [req.params.agentId])
-    await db.upsertProfile(req.userId, {
+    await pool.query('DELETE FROM onboarding_conversations WHERE agent_id = $1', [req.params.agentId])
+    await db.updateAgent(req.params.agentId, {
       onboarding_phase: 0, onboarding_data: '{}',
       profile_confirmed: false, matching_active: false,
-      persona_ref: null, showcase_public: null
-    }, req.params.agentId)
+      persona_ref: null, showcase_public: null,
+      goal_type: null, archetype_tags: null, decision_style: null,
+      communication_directness: null, openness_score: null,
+      hard_filters: '{}', style_vector: '{}',
+      gender: null, age: null, physical_self: '{}', orientation: null,
+      relationship_format: null, physical_preferences: '{}',
+      intimate_tags: null, intimate_dealbreakers: null,
+      partner_gender_preference: null, profile_updated_at: null
+    })
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
 
-// Onboarding chat
+// ─── Onboarding chat ──────────────────────────────────────────────────────────
+
 app.post('/api/chat', auth, async (req, res) => {
   try {
-    const { message, agentId } = req.body
+    const { message } = req.body
     if (!message?.trim()) return res.status(400).json({ error: 'Empty message' })
 
-    const result = await conductOnboarding(req.userId, message, agentId || null)
+    const result = await conductOnboarding(req.agentId, message)
 
     if (result.finalPhase) {
-      const aid = agentId || (await db.getProfile(req.userId))?.id
-      if (aid) {
-        await db.upsertProfile(req.userId, {
-          profile_confirmed: true, matching_active: true, profile_updated_at: new Date()
-        }, aid)
-        await scheduleMatching(req.userId)
-      }
+      await db.updateAgent(req.agentId, {
+        profile_confirmed: true,
+        matching_active: true,
+        profile_updated_at: new Date()
+      })
+      await scheduleMatching(req.agentId)
     }
 
     res.json(result)
@@ -235,10 +138,12 @@ app.post('/api/chat', auth, async (req, res) => {
   }
 })
 
-// Get matches (optional ?agentId= to filter by specific agent profile)
+// ─── Matches ──────────────────────────────────────────────────────────────────
+
+// Get all matches for this agent
 app.get('/api/matches', auth, async (req, res) => {
   try {
-    const matches = await db.getMatchesForUser(req.userId, req.query.agentId || null)
+    const matches = await db.getMatchesForAgent(req.agentId)
     res.json({ matches })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -250,6 +155,9 @@ app.get('/api/match/:matchId', auth, async (req, res) => {
   try {
     const match = await db.getMatch(req.params.matchId)
     if (!match) return res.status(404).json({ error: 'Not found' })
+    // Verify caller is a participant
+    if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
+      return res.status(403).json({ error: 'Forbidden' })
     res.json({ match })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -259,6 +167,10 @@ app.get('/api/match/:matchId', auth, async (req, res) => {
 // Get match messages
 app.get('/api/match/:matchId/messages', auth, async (req, res) => {
   try {
+    const match = await db.getMatch(req.params.matchId)
+    if (!match) return res.status(404).json({ error: 'Not found' })
+    if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
+      return res.status(403).json({ error: 'Forbidden' })
     const messages = await db.getMatchMessages(req.params.matchId)
     res.json({ messages })
   } catch (e) {
@@ -266,23 +178,25 @@ app.get('/api/match/:matchId/messages', auth, async (req, res) => {
   }
 })
 
-// Ask agent a question on behalf of match candidate
+// Ask the counterpart's agent a question
 app.post('/api/match/:matchId/ask', auth, async (req, res) => {
   try {
-    const { question } = req.body
+    const { question, forceAgent } = req.body
     if (!question?.trim()) return res.status(400).json({ error: 'Empty question' })
 
     const match = await db.getMatch(req.params.matchId)
     if (!match) return res.status(404).json({ error: 'Not found' })
+    if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
+      return res.status(403).json({ error: 'Forbidden' })
 
-    const isA           = String(match.user_a_id) === String(req.userId)
+    const isA           = String(match.agent_a_id) === String(req.agentId)
     const targetPersona = isA
       ? (match.persona_b || match.showcase_b || '')
       : (match.persona_a || match.showcase_a || '')
 
-    const result = await agentAnswerQuestion(question, targetPersona)
+    const result = await agentAnswerQuestion(question, targetPersona, !!forceAgent)
 
-    await db.addMatchMessage(req.params.matchId, req.userId, question, result.routed)
+    await db.addMatchMessage(req.params.matchId, req.agentId, question, result.routed)
     if (!result.routed) {
       await db.addMatchMessage(req.params.matchId, 'agent', result.answer, false)
     }
@@ -293,14 +207,20 @@ app.post('/api/match/:matchId/ask', auth, async (req, res) => {
   }
 })
 
-// Reply to a routed question (counterpart answers directly)
+// Send a direct human reply (question routed to you, or direct mode)
 app.post('/api/match/:matchId/reply', auth, async (req, res) => {
   try {
     const { text } = req.body
     if (!text?.trim()) return res.status(400).json({ error: 'Empty reply' })
-    // Prefix with 'human:' to distinguish direct human replies from agent answers
-    const msg = await db.addMatchMessage(req.params.matchId, `human:${req.userId}`, text, false)
-    res.json({ message: msg })
+
+    const match = await db.getMatch(req.params.matchId)
+    if (!match) return res.status(404).json({ error: 'Not found' })
+    if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
+      return res.status(403).json({ error: 'Forbidden' })
+
+    // addMatchMessage returns null if match is mutual (not saved)
+    const msg = await db.addMatchMessage(req.params.matchId, `human:${req.agentId}`, text, false)
+    res.json({ message: msg, saved: !!msg })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -309,12 +229,16 @@ app.post('/api/match/:matchId/reply', auth, async (req, res) => {
 // Set intent (want to meet)
 app.post('/api/match/:matchId/intent', auth, async (req, res) => {
   try {
-    const result = await db.setMatchIntent(req.params.matchId, req.userId)
+    const match = await db.getMatch(req.params.matchId)
+    if (!match) return res.status(404).json({ error: 'Not found' })
+    if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
+      return res.status(403).json({ error: 'Forbidden' })
+
+    const result = await db.setMatchIntent(req.params.matchId, req.agentId)
 
     if (result === 'mutual') {
-      const match = await db.getMatch(req.params.matchId)
-      await db.setMatchingActive(match.user_a_id, false)
-      await db.setMatchingActive(match.user_b_id, false)
+      await db.setMatchingActive(match.agent_a_id, false)
+      await db.setMatchingActive(match.agent_b_id, false)
     }
 
     res.json({ result })

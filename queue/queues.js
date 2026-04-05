@@ -15,8 +15,8 @@ export const notifyQueue   = new Queue('notify', { connection })
 
 // ─── Job helpers ──────────────────────────────────────────────────────────────
 
-export async function scheduleMatching(userId, delayMs = 0) {
-  await matchingQueue.add('run-matching', { userId }, {
+export async function scheduleMatching(agentId, delayMs = 0) {
+  await matchingQueue.add('run-matching', { agentId }, {
     delay: delayMs,
     attempts: 3,
     backoff: { type: 'exponential', delay: 5000 }
