@@ -71,7 +71,7 @@ export async function conductOnboarding(agentId, userMessage) {
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 700,
+    max_tokens: 1200,
     system: SYSTEM_PROMPT + knownStr,
     messages: [
       ...history.map(h => ({ role: h.role, content: h.content })),
