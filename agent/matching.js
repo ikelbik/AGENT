@@ -135,10 +135,16 @@ function intimateCompatibilityScore(a, b) {
   const dbA   = a.intimate_dealbreakers || []
   const dbB   = b.intimate_dealbreakers || []
 
+  // Both have no preferences — neutral
   if (tagsA.length === 0 && tagsB.length === 0) return 0.7
 
+  // Check dealbreakers only (tags presence is not required)
   if (tagsA.some(t => dbB.includes(t)) || tagsB.some(t => dbA.includes(t))) return 0.0
 
+  // If one side has no tags — they have no preferences, compatible with anything
+  if (tagsA.length === 0 || tagsB.length === 0) return 0.7
+
+  // Both have tags — score by overlap
   const union        = new Set([...tagsA, ...tagsB])
   const intersection = tagsA.filter(t => tagsB.includes(t))
   return union.size > 0 ? intersection.length / union.size : 0.7
