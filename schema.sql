@@ -1,191 +1,122 @@
--- AgentNet Database Schema
--- Run: psql $DATABASE_URL -f scripts/schema.sql
+-- AgentNet Database Schema v2 — anonymized, agent-centric
+-- Run: psql $DATABASE_URL -f schema.sql
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS vector;
 
--- ─── Users ───────────────────────────────────────────────────────────────────
+-- ─── Clean up old tables ──────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS users (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  telegram_id BIGINT UNIQUE NOT NULL,
-  username    TEXT,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
+DROP TABLE IF EXISTS match_messages            CASCADE;
+DROP TABLE IF EXISTS matches                   CASCADE;
+DROP TABLE IF EXISTS conversations             CASCADE;
+DROP TABLE IF EXISTS ping_quota                CASCADE;
+DROP TABLE IF EXISTS watchlist                 CASCADE;
+DROP TABLE IF EXISTS dialogues                 CASCADE;
+DROP TABLE IF EXISTS pings                     CASCADE;
+DROP TABLE IF EXISTS profiles                  CASCADE;
+DROP TABLE IF EXISTS users                     CASCADE;
+DROP TABLE IF EXISTS onboarding_conversations  CASCADE;
+DROP TABLE IF EXISTS agents                    CASCADE;
 
--- ─── Profiles (agent's knowledge about the user) ─────────────────────────────
+-- ─── Agents (self-contained — no user FK, no personal data) ──────────────────
 
-CREATE TABLE IF NOT EXISTS profiles (
+CREATE TABLE agents (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id         UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  agent_name      TEXT DEFAULT 'Агент',
 
   -- Onboarding state
-  onboarding_phase  INT DEFAULT 0,   -- 0=not started, 1-6=phase, 7=complete
-  onboarding_data   JSONB DEFAULT '{}',
+  onboarding_phase    INT DEFAULT 0,         -- 0 = not started, 1 = in progress, 8 = done
+  onboarding_data     JSONB DEFAULT '{}',
+  profile_confirmed   BOOLEAN DEFAULT FALSE,
+  matching_active     BOOLEAN DEFAULT FALSE,
+  matching_stopped_at TIMESTAMPTZ,
+  profile_updated_at  TIMESTAMPTZ,
 
-  -- Structured profile (filled after onboarding)
-  goal_type         TEXT,            -- romantic | business | mentor
-  archetype_tags    TEXT[],
-  decision_style    TEXT,
-  communication_directness FLOAT,   -- 0..1
-  openness_score    FLOAT,          -- 0..1
-  hard_filters      JSONB DEFAULT '{}',
-  style_vector      JSONB DEFAULT '{}',
+  -- Personality profile
+  goal_type                  TEXT,            -- romantic | business | mentor
+  archetype_tags             TEXT[],
+  decision_style             TEXT,
+  communication_directness   FLOAT,
+  openness_score             FLOAT,
+  hard_filters               JSONB DEFAULT '{}',
+  style_vector               JSONB DEFAULT '{}',
+  showcase_public            TEXT,            -- public-facing summary
+  showcase_tags              TEXT[],
 
-  -- Needs detected passively from conversations
-  detected_needs    JSONB DEFAULT '[]',
+  -- Romantic-only fields
+  gender                     TEXT,
+  age                        INT,
+  physical_self              JSONB DEFAULT '{}',
+  orientation                TEXT,
+  relationship_format        TEXT,
+  partner_gender_preference  TEXT,
+  physical_preferences       JSONB DEFAULT '{}',
+  intimate_tags              TEXT[],
+  intimate_dealbreakers      TEXT[],
 
-  -- Public showcase (shown to other agents)
-  showcase_public   TEXT,           -- 2-3 sentence summary
-  showcase_tags     TEXT[],
+  -- Agent personality prompt (used when answering questions from candidates)
+  persona_ref TEXT,
 
-  -- Embedding (computed once, updated on profile change)
-  embedding         vector(1536),
-
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS profiles_embedding_idx
-  ON profiles USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+-- ─── Onboarding conversations (user ↔ agent during setup) ────────────────────
 
--- ─── Pings ───────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS pings (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  from_user_id  UUID REFERENCES users(id) ON DELETE CASCADE,
-  to_user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
-  score         FLOAT,
-  hypothesis    TEXT,
-  ping_text     TEXT,
-  status        TEXT DEFAULT 'sent',  -- sent | accepted | rejected | expired
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  responded_at  TIMESTAMPTZ
+CREATE TABLE onboarding_conversations (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agent_id   UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL,    -- 'user' | 'assistant'
+  content    TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS pings_to_user_idx ON pings(to_user_id, status);
-CREATE INDEX IF NOT EXISTS pings_from_user_idx ON pings(from_user_id, created_at);
+CREATE INDEX oc_agent_idx ON onboarding_conversations(agent_id, created_at DESC);
 
--- ─── Dialogues ───────────────────────────────────────────────────────────────
+-- ─── Matches ──────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS dialogues (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  ping_id         UUID REFERENCES pings(id),
-  user_a_id       UUID REFERENCES users(id),
-  user_b_id       UUID REFERENCES users(id),
-  status          TEXT DEFAULT 'active',  -- active | handoff | closed
-  turns           INT DEFAULT 0,
-  transcript      JSONB DEFAULT '[]',
-
-  -- Temporal lock
-  intent_a        BOOLEAN DEFAULT FALSE,
-  intent_b        BOOLEAN DEFAULT FALSE,
-  intent_a_at     TIMESTAMPTZ,
-  intent_b_at     TIMESTAMPTZ,
-  handoff_at      TIMESTAMPTZ,
-
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ─── Watchlist ───────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS watchlist (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
-  target_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  score         FLOAT,
-  reason        TEXT,
-  added_at      TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, target_user_id)
-);
-
--- ─── Conversations (bot chat history per user) ───────────────────────────────
-
-CREATE TABLE IF NOT EXISTS conversations (
+CREATE TABLE matches (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
-  role        TEXT NOT NULL,   -- user | assistant
-  content     TEXT NOT NULL,
-  metadata    JSONB DEFAULT '{}',
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  agent_a_id  UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  agent_b_id  UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  score       FLOAT,
+  hypothesis  TEXT,
+  conversation JSONB DEFAULT '[]',    -- agent-to-agent intro transcript [{from,text}]
+  status      TEXT DEFAULT 'new',     -- new | active | mutual | closed
+  intent_a    BOOLEAN DEFAULT FALSE,
+  intent_b    BOOLEAN DEFAULT FALSE,
+  notified_b  BOOLEAN DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(agent_a_id, agent_b_id)
 );
 
-CREATE INDEX IF NOT EXISTS conversations_user_idx ON conversations(user_id, created_at DESC);
+CREATE INDEX matches_a_idx ON matches(agent_a_id, status);
+CREATE INDEX matches_b_idx ON matches(agent_b_id, status);
 
--- ─── Ping rate limiting ───────────────────────────────────────────────────────
+-- ─── Match messages (NOT saved after status = mutual — direct chat goes local) ─
 
-CREATE TABLE IF NOT EXISTS ping_quota (
-  user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
-  date       DATE DEFAULT CURRENT_DATE,
-  count      INT DEFAULT 0,
-  PRIMARY KEY (user_id, date)
+CREATE TABLE match_messages (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  match_id   UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+  sender     TEXT NOT NULL,    -- agentId | 'agent' | 'human:<agentId>'
+  content    TEXT NOT NULL,
+  routed     BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ─── Functions ───────────────────────────────────────────────────────────────
+CREATE INDEX mm_match_idx ON match_messages(match_id, created_at ASC);
+
+-- ─── Triggers ─────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER profiles_updated_at
-  BEFORE UPDATE ON profiles
+CREATE TRIGGER agents_updated_at
+  BEFORE UPDATE ON agents
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-CREATE OR REPLACE TRIGGER dialogues_updated_at
-  BEFORE UPDATE ON dialogues
+CREATE TRIGGER matches_updated_at
+  BEFORE UPDATE ON matches
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
--- ─── Migration: matching control ─────────────────────────────────────────────
-
-DO $$ BEGIN
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_active BOOLEAN DEFAULT TRUE;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS matching_stopped_at TIMESTAMPTZ;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS profile_confirmed BOOLEAN DEFAULT FALSE;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS pending_action TEXT;
-  -- Phase 7: private intimate profile
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS gender TEXT;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS age INT;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS physical_self JSONB DEFAULT '{}';
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS orientation TEXT;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS relationship_format TEXT;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS physical_preferences JSONB DEFAULT '{}';
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_tags TEXT[];
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS intimate_dealbreakers TEXT[];
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS partner_gender_preference TEXT;
-  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS persona_ref TEXT;
-EXCEPTION WHEN others THEN NULL;
-END $$;
-
--- ─── Matches (replaces pings) ─────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS matches (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_a_id     UUID REFERENCES users(id) ON DELETE CASCADE,  -- who initiated
-  user_b_id     UUID REFERENCES users(id) ON DELETE CASCADE,  -- candidate
-  score         FLOAT,
-  hypothesis    TEXT,
-  conversation  JSONB DEFAULT '[]',   -- agent-to-agent transcript [{from,text}]
-  status        TEXT DEFAULT 'new',   -- new | active | mutual | closed
-  intent_a      BOOLEAN DEFAULT FALSE,
-  intent_b      BOOLEAN DEFAULT FALSE,
-  notified_b    BOOLEAN DEFAULT FALSE, -- true when B was told about this match
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_a_id, user_b_id)
-);
-
-CREATE TABLE IF NOT EXISTS match_messages (
-  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  match_id   UUID REFERENCES matches(id) ON DELETE CASCADE,
-  sender     TEXT,   -- 'user_a' | 'agent_b' | 'user_b'
-  content    TEXT,
-  routed     BOOLEAN DEFAULT FALSE,  -- true if question was routed to real user
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS matches_user_a_idx ON matches(user_a_id, status);
-CREATE INDEX IF NOT EXISTS matches_user_b_idx ON matches(user_b_id, status);
