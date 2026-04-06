@@ -3,25 +3,19 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ─── Clean up old tables ──────────────────────────────────────────────────────
+-- ─── Clean up ─────────────────────────────────────────────────────────────────
 
-DROP TABLE IF EXISTS match_messages            CASCADE;
-DROP TABLE IF EXISTS matches                   CASCADE;
-DROP TABLE IF EXISTS conversations             CASCADE;
-DROP TABLE IF EXISTS ping_quota                CASCADE;
-DROP TABLE IF EXISTS watchlist                 CASCADE;
-DROP TABLE IF EXISTS dialogues                 CASCADE;
-DROP TABLE IF EXISTS pings                     CASCADE;
-DROP TABLE IF EXISTS profiles                  CASCADE;
-DROP TABLE IF EXISTS users                     CASCADE;
-DROP TABLE IF EXISTS onboarding_conversations  CASCADE;
-DROP TABLE IF EXISTS agents                    CASCADE;
+DROP TABLE IF EXISTS match_messages           CASCADE;
+DROP TABLE IF EXISTS matches                  CASCADE;
+DROP TABLE IF EXISTS onboarding_conversations CASCADE;
+DROP TABLE IF EXISTS agents                   CASCADE;
 
 -- ─── Agents (self-contained — no user FK, no personal data) ──────────────────
 
 CREATE TABLE agents (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   agent_name      TEXT DEFAULT 'Агент',
+  owner_hash      TEXT,   -- SHA-256(telegramId + salt), no personal data
 
   -- Onboarding state
   onboarding_phase    INT DEFAULT 0,         -- 0 = not started, 1 = in progress, 8 = done
