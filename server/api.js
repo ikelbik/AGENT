@@ -275,7 +275,7 @@ app.post('/api/match/:matchId/intent', auth, async (req, res) => {
 
 app.post('/api/match/:matchId/send', auth, async (req, res) => {
   try {
-    const { text, forceAgent } = req.body
+    const { text, forceAgent, skipAgent } = req.body
     if (!text?.trim()) return res.status(400).json({ error: 'Empty message' })
 
     const match = await db.getMatch(req.params.matchId)
@@ -283,8 +283,8 @@ app.post('/api/match/:matchId/send', auth, async (req, res) => {
     if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
       return res.status(403).json({ error: 'Forbidden' })
 
-    // Save sender's message
-    await db.addMatchMessage(req.params.matchId, req.agentId, text, false)
+    // Save sender's message — mark routed=true for direct/human mode
+    await db.addMatchMessage(req.params.matchId, req.agentId, text, !!skipAgent)
 
     const isA           = String(match.agent_a_id) === String(req.agentId)
     const targetAgentId = isA ? match.agent_b_id : match.agent_a_id
@@ -292,17 +292,33 @@ app.post('/api/match/:matchId/send', auth, async (req, res) => {
       ? (match.persona_b || match.showcase_b || '')
       : (match.persona_a || match.showcase_a || '')
 
-    // Build conversation history from the other side's perspective (exclude current msg)
+    // Build conversation history from the target's perspective (exclude current msg)
+    // Merge consecutive same-role messages to satisfy Claude's alternating requirement
     const allMessages = await db.getMatchMessages(req.params.matchId)
-    const history = allMessages.slice(0, -1).map(m => {
+
+    // If the last message from the other party was direct (routed=true), suppress agent here too
+    const lastFromTarget = [...allMessages].reverse()
+      .find(m => String(m.sender) === String(targetAgentId) || m.sender === `human:${targetAgentId}`)
+    const targetSentDirect = lastFromTarget?.routed === true
+
+    const rawHistory = allMessages.slice(0, -1).map(m => {
       const fromTarget = m.sender === 'agent' ||
         String(m.sender) === String(targetAgentId) ||
         m.sender === `human:${targetAgentId}`
       return { role: fromTarget ? 'assistant' : 'user', content: m.content }
     })
+    const history = rawHistory.reduce((acc, msg) => {
+      const prev = acc[acc.length - 1]
+      if (prev && prev.role === msg.role) {
+        prev.content += '\n' + msg.content
+      } else {
+        acc.push({ ...msg })
+      }
+      return acc
+    }, [])
 
     let agentAnswer = null
-    if (targetPersona) {
+    if (!skipAgent && !targetSentDirect && targetPersona) {
       const result = await agentAnswerQuestion(text, targetPersona, history, !!forceAgent)
       if (!result.routed && result.answer) {
         await db.addMatchMessage(req.params.matchId, 'agent', result.answer, false)
