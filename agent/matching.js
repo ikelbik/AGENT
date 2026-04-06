@@ -309,21 +309,34 @@ B: ${msg4}
 
 // ─── Agent answers a question ─────────────────────────────────────────────────
 
-export async function agentAnswerQuestion(question, targetPersona, forceAgent = false) {
-  const routeInstruction = forceAgent
-    ? 'Всегда отвечай сам, опираясь на профиль. Никогда не используй ROUTE_TO_USER.'
-    : 'Если вопрос личный и требует подтверждения от реального человека — выведи ROUTE_TO_USER и больше ничего.'
+export async function agentAnswerQuestion(question, targetPersona, history = [], forceAgent = false) {
+  const system = forceAgent
+    ? `Ты — агент, представляющий человека. Отвечай только на основе профиля.
+Если информации нет в профиле — так и скажи, не выдумывай.
+
+ПРОФИЛЬ:
+${targetPersona}`
+    : `Ты — агент, представляющий человека. Твоя задача: решить, можешь ли ты ответить на основе профиля.
+
+ПРОФИЛЬ:
+${targetPersona}
+
+СТРОГИЕ ПРАВИЛА:
+- Выведи ТОЛЬКО "ROUTE_TO_USER" (без других слов) если вопрос о чём-либо, чего нет в профиле
+- Выведи ТОЛЬКО "ROUTE_TO_USER" если это личный вопрос о конкретных деталях жизни
+- Выведи ТОЛЬКО "ROUTE_TO_USER" при малейшем сомнении
+- Отвечай ТОЛЬКО если информация дословно или очевидно есть в профиле
+- Никогда не домысливай, не додумывай, не импровизируй от лица персонажа
+- Ответ: максимум 2 коротких предложения`
 
   const response = await claude.messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 200,
-    system: `Ты — агент, представляющий человека. Отвечай на вопросы от его лица, опираясь на его профиль.
-${routeInstruction}
-Если можешь ответить уверенно из профиля — ответь кратко (1-2 предложения).
-
-ПРОФИЛЬ ЧЕЛОВЕКА:
-${targetPersona}`,
-    messages: [{ role: 'user', content: question }]
+    system,
+    messages: [
+      ...history,
+      { role: 'user', content: question }
+    ]
   })
 
   const text = response.content[0].text.trim()
