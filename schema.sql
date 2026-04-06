@@ -3,16 +3,9 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ─── Clean up ─────────────────────────────────────────────────────────────────
-
-DROP TABLE IF EXISTS match_messages           CASCADE;
-DROP TABLE IF EXISTS matches                  CASCADE;
-DROP TABLE IF EXISTS onboarding_conversations CASCADE;
-DROP TABLE IF EXISTS agents                   CASCADE;
-
 -- ─── Agents (self-contained — no user FK, no personal data) ──────────────────
 
-CREATE TABLE agents (
+CREATE TABLE IF NOT EXISTS agents (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   agent_name      TEXT DEFAULT 'Агент',
   owner_hash      TEXT,   -- SHA-256(telegramId + salt), no personal data
@@ -56,7 +49,7 @@ CREATE TABLE agents (
 
 -- ─── Onboarding conversations (user ↔ agent during setup) ────────────────────
 
-CREATE TABLE onboarding_conversations (
+CREATE TABLE IF NOT EXISTS onboarding_conversations (
   id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   agent_id   UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   role       TEXT NOT NULL,    -- 'user' | 'assistant'
@@ -68,7 +61,7 @@ CREATE INDEX oc_agent_idx ON onboarding_conversations(agent_id, created_at DESC)
 
 -- ─── Matches ──────────────────────────────────────────────────────────────────
 
-CREATE TABLE matches (
+CREATE TABLE IF NOT EXISTS matches (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   agent_a_id  UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   agent_b_id  UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -89,7 +82,7 @@ CREATE INDEX matches_b_idx ON matches(agent_b_id, status);
 
 -- ─── Match messages (NOT saved after status = mutual — direct chat goes local) ─
 
-CREATE TABLE match_messages (
+CREATE TABLE IF NOT EXISTS match_messages (
   id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   match_id   UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
   sender     TEXT NOT NULL,    -- agentId | 'agent' | 'human:<agentId>'
