@@ -269,6 +269,53 @@ app.post('/api/match/:matchId/intent', auth, async (req, res) => {
   }
 })
 
+// ─── Unified send ─────────────────────────────────────────────────────────────
+// Single endpoint: saves message, tries agent reply with full history context.
+// If agent can't answer (routes) — message just sits, no special flag.
+
+app.post('/api/match/:matchId/send', auth, async (req, res) => {
+  try {
+    const { text, forceAgent } = req.body
+    if (!text?.trim()) return res.status(400).json({ error: 'Empty message' })
+
+    const match = await db.getMatch(req.params.matchId)
+    if (!match) return res.status(404).json({ error: 'Not found' })
+    if (match.agent_a_id !== req.agentId && match.agent_b_id !== req.agentId)
+      return res.status(403).json({ error: 'Forbidden' })
+
+    // Save sender's message
+    await db.addMatchMessage(req.params.matchId, req.agentId, text, false)
+
+    const isA           = String(match.agent_a_id) === String(req.agentId)
+    const targetAgentId = isA ? match.agent_b_id : match.agent_a_id
+    const targetPersona = isA
+      ? (match.persona_b || match.showcase_b || '')
+      : (match.persona_a || match.showcase_a || '')
+
+    // Build conversation history from the other side's perspective (exclude current msg)
+    const allMessages = await db.getMatchMessages(req.params.matchId)
+    const history = allMessages.slice(0, -1).map(m => {
+      const fromTarget = m.sender === 'agent' ||
+        String(m.sender) === String(targetAgentId) ||
+        m.sender === `human:${targetAgentId}`
+      return { role: fromTarget ? 'assistant' : 'user', content: m.content }
+    })
+
+    let agentAnswer = null
+    if (targetPersona) {
+      const result = await agentAnswerQuestion(text, targetPersona, history, !!forceAgent)
+      if (!result.routed && result.answer) {
+        await db.addMatchMessage(req.params.matchId, 'agent', result.answer, false)
+        agentAnswer = result.answer
+      }
+    }
+
+    res.json({ agentAnswer })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 export function startApiServer() {
