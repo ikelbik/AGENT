@@ -307,7 +307,7 @@ app.post('/api/match/:matchId/send', auth, async (req, res) => {
         m.sender === `human:${targetAgentId}`
       return { role: fromTarget ? 'assistant' : 'user', content: m.content }
     })
-    const history = rawHistory.reduce((acc, msg) => {
+    const mergedHistory = rawHistory.reduce((acc, msg) => {
       const prev = acc[acc.length - 1]
       if (prev && prev.role === msg.role) {
         prev.content += '\n' + msg.content
@@ -316,6 +316,8 @@ app.post('/api/match/:matchId/send', auth, async (req, res) => {
       }
       return acc
     }, [])
+    // Claude requires conversation to start with 'user'
+    const history = mergedHistory[0]?.role === 'assistant' ? mergedHistory.slice(1) : mergedHistory
 
     let agentAnswer = null
     if (!skipAgent && !targetSentDirect && targetPersona) {
