@@ -320,12 +320,16 @@ app.post('/api/match/:matchId/send', auth, async (req, res) => {
     const history = mergedHistory[0]?.role === 'assistant' ? mergedHistory.slice(1) : mergedHistory
 
     let agentAnswer = null
+    console.log(`[send] skipAgent=${skipAgent} targetSentDirect=${targetSentDirect} hasPersona=${!!targetPersona} historyLen=${history.length}`)
     if (!skipAgent && !targetSentDirect && targetPersona) {
       const result = await agentAnswerQuestion(text, targetPersona, history, !!forceAgent)
+      console.log(`[send] agentResult routed=${result.routed} answer=${result.answer?.slice(0,60)}`)
       if (!result.routed && result.answer) {
         await db.addMatchMessage(req.params.matchId, 'agent', result.answer, false)
         agentAnswer = result.answer
       }
+    } else {
+      console.log(`[send] agent skipped — skipAgent=${skipAgent} targetSentDirect=${targetSentDirect} hasPersona=${!!targetPersona}`)
     }
 
     res.json({ agentAnswer })
