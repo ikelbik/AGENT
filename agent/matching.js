@@ -129,11 +129,16 @@ function isRelationshipFormatCompatible(a, b) {
   return !strictPairs.some(p => p.sort().join('|') === key)
 }
 
+// Normalize tag for comparison: lowercase, trim, replace separators
+function normTag(t) {
+  return String(t).toLowerCase().trim().replace(/[\s_-]+/g, '_')
+}
+
 function intimateCompatibilityScore(a, b) {
-  const tagsA = a.intimate_tags || []
-  const tagsB = b.intimate_tags || []
-  const dbA   = a.intimate_dealbreakers || []
-  const dbB   = b.intimate_dealbreakers || []
+  const tagsA = (a.intimate_tags || []).map(normTag)
+  const tagsB = (b.intimate_tags || []).map(normTag)
+  const dbA   = (a.intimate_dealbreakers || []).map(normTag)
+  const dbB   = (b.intimate_dealbreakers || []).map(normTag)
 
   // Both have no preferences — neutral
   if (tagsA.length === 0 && tagsB.length === 0) return 0.7

@@ -22,14 +22,14 @@ const SYSTEM_PROMPT = `Ты — агент-интервьюер сервиса �
 ПОЛЯ ДЛЯ СБОРА:
 Базовые (все цели):
 • goal_type: "romantic" | "business" | "mentor"
-• archetype_tags: ["tag1","tag2"] — теги личности
+• archetype_tags: ["tag1","tag2"] — personality tags (English only, lowercase)
 • decision_style: "intuitive" | "analytical" | "mixed"
 • communication_directness: 0.0–1.0
 • openness_score: 0.0–1.0
 • hard_filters: {} — жёсткие ограничения
 • style_vector: {"directness":0-1,"pace":0-1,"structure":0-1}
 • showcase_public: "2-3 предложения о человеке от третьего лица для витрины"
-• showcase_tags: ["tag1","tag2"]
+• showcase_tags: ["tag1","tag2"] (English only, lowercase)
 
 Для "romantic" дополнительно:
 • gender, age
@@ -38,8 +38,8 @@ const SYSTEM_PROMPT = `Ты — агент-интервьюер сервиса �
 • relationship_format: "serious"|"casual"|"open"|"poly"
 • partner_gender_preference: "male"|"female"|"any"
 • physical_preferences: {"age_min":N,"age_max":N,"height_min":N,"height_max":N}
-• intimate_tags: [] — предпочтения
-• intimate_dealbreakers: [] — абсолютные нет
+• intimate_tags: [] — preferences (English only, lowercase)
+• intimate_dealbreakers: [] — absolute no-gos (English only, lowercase)
 
 Веди разговор естественно — только вопросы и уточнения, без служебных блоков.
 
