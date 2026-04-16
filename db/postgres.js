@@ -109,13 +109,13 @@ export const db = {
         if (r.profile_confirmed) confirmed++
         if (r.profile_confirmed && r.matching_active) {
           active++
-          if (r.last_match_at && r.last_match_at > r.my_profile_ts && r.last_match_at > (r.profile_updated_at ?? new Date())) {
+          if (r.last_match_at) {
             excluded_match++
-            console.log(`[db:candidates] agent=${me} SKIP ${r.id.slice(0,8)} — match=${r.last_match_at?.toISOString().slice(0,10)} my_ts=${r.my_profile_ts?.toISOString?.()?.slice(0,10)} their_ts=${r.profile_updated_at?.toISOString?.()?.slice(0,10) ?? 'null'}`)
+            console.log(`[db:candidates] agent=${me} SKIP ${r.id.slice(0,8)} — already matched on ${r.last_match_at.toISOString().slice(0,10)}`)
           }
         }
       }
-      console.log(`[db:candidates] agent=${me} other=${total} confirmed=${confirmed} active=${active} excluded_by_match=${excluded_match}`)
+      console.log(`[db:candidates] agent=${me} other=${total} confirmed=${confirmed} active=${active} excluded_by_existing_match=${excluded_match}`)
     } catch (e) {
       console.error('[db:candidates] debug query failed:', e.message)
     }
