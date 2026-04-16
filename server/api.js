@@ -136,6 +136,46 @@ app.post('/api/agents/:agentId/reset', auth, async (req, res) => {
   }
 })
 
+// ─── Sync Gemma profile to server ────────────────────────────────────────────
+// Вызывается фронтендом после завершения онбординга через локальную LLM.
+// Записывает профиль в БД, ставит profile_confirmed = true, запускает матчинг.
+
+app.put('/api/agents/:agentId/profile', auth, async (req, res) => {
+  if (req.agentId !== req.params.agentId)
+    return res.status(403).json({ error: 'Forbidden' })
+  try {
+    const d = req.body
+    await db.updateAgent(req.params.agentId, {
+      goal_type:                d.goal_type                ?? null,
+      showcase_public:          d.showcase_public          ?? null,
+      archetype_tags:           d.archetype_tags           ?? null,
+      persona_ref:              d.persona_ref              ?? null,
+      decision_style:           d.decision_style           ?? null,
+      communication_directness: d.communication_directness ?? null,
+      openness_score:           d.openness_score           ?? null,
+      hard_filters:             d.hard_filters             ?? {},
+      style_vector:             d.style_vector             ?? {},
+      gender:                   d.gender                   ?? null,
+      age:                      d.age                      ?? null,
+      physical_self:            d.physical_self            ?? {},
+      orientation:              d.orientation              ?? null,
+      relationship_format:      d.relationship_format      ?? null,
+      partner_gender_preference:d.partner_gender_preference?? null,
+      physical_preferences:     d.physical_preferences     ?? {},
+      intimate_tags:            d.intimate_tags            ?? null,
+      intimate_dealbreakers:    d.intimate_dealbreakers    ?? null,
+      profile_confirmed:        true,
+      matching_active:          true,
+      onboarding_phase:         8,
+      profile_updated_at:       new Date()
+    })
+    await scheduleMatching(req.params.agentId)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ─── Onboarding chat ──────────────────────────────────────────────────────────
 
 app.post('/api/chat', auth, async (req, res) => {

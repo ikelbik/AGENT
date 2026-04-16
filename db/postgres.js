@@ -84,17 +84,38 @@ export const db = {
   // ─── Candidate search ────────────────────────────────────────────────────────
 
   async findCandidates(agentId, limit = 50) {
-    // Debug counts
+    // Debug: общая статистика + причина фильтрации
     try {
       const { rows: d } = await pool.query(
         `SELECT
-           COUNT(*) FILTER (WHERE id != $1)                                          AS total_other,
-           COUNT(*) FILTER (WHERE id != $1 AND profile_confirmed = TRUE)             AS confirmed,
-           COUNT(*) FILTER (WHERE id != $1 AND profile_confirmed AND matching_active) AS active
-         FROM agents`,
+           a.id,
+           a.profile_confirmed,
+           a.matching_active,
+           a.profile_updated_at,
+           (SELECT MAX(m.created_at)
+            FROM matches m
+            WHERE (m.agent_a_id = $1 AND m.agent_b_id = a.id)
+               OR (m.agent_b_id = $1 AND m.agent_a_id = a.id)) AS last_match_at,
+           COALESCE(
+             (SELECT profile_updated_at FROM agents self WHERE self.id = $1),
+             NOW()) AS my_profile_ts
+         FROM agents a
+         WHERE a.id != $1`,
         [agentId]
       )
-      console.log(`[db:candidates] agent=${agentId.slice(0,8)} other=${d[0].total_other} confirmed=${d[0].confirmed} active=${d[0].active}`)
+      const me = agentId.slice(0, 8)
+      let total = d.length, confirmed = 0, active = 0, excluded_match = 0
+      for (const r of d) {
+        if (r.profile_confirmed) confirmed++
+        if (r.profile_confirmed && r.matching_active) {
+          active++
+          if (r.last_match_at && r.last_match_at > r.my_profile_ts && r.last_match_at > (r.profile_updated_at ?? new Date())) {
+            excluded_match++
+            console.log(`[db:candidates] agent=${me} SKIP ${r.id.slice(0,8)} — match=${r.last_match_at?.toISOString().slice(0,10)} my_ts=${r.my_profile_ts?.toISOString?.()?.slice(0,10)} their_ts=${r.profile_updated_at?.toISOString?.()?.slice(0,10) ?? 'null'}`)
+          }
+        }
+      }
+      console.log(`[db:candidates] agent=${me} other=${total} confirmed=${confirmed} active=${active} excluded_by_match=${excluded_match}`)
     } catch (e) {
       console.error('[db:candidates] debug query failed:', e.message)
     }
@@ -107,12 +128,8 @@ export const db = {
          AND a.matching_active = TRUE
          AND NOT EXISTS (
            SELECT 1 FROM matches m
-           WHERE ((m.agent_a_id = $1 AND m.agent_b_id = a.id)
-               OR (m.agent_b_id = $1 AND m.agent_a_id = a.id))
-             AND m.created_at > COALESCE(
-               (SELECT profile_updated_at FROM agents self WHERE self.id = $1),
-               NOW())
-             AND m.created_at > COALESCE(a.profile_updated_at, NOW())
+           WHERE (m.agent_a_id = $1 AND m.agent_b_id = a.id)
+              OR (m.agent_b_id = $1 AND m.agent_a_id = a.id)
          )
        LIMIT $2`,
       [agentId, limit]
