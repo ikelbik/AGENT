@@ -112,10 +112,22 @@ function physicalPreferencesScore(a, b) {
   const prefsA = a.physical_preferences || {}
   const selfB  = b.physical_self || {}
 
-  if (prefsA.age_min    && b.age          && b.age          < prefsA.age_min)    score -= 0.4
-  if (prefsA.age_max    && b.age          && b.age          > prefsA.age_max)    score -= 0.4
-  if (prefsA.height_min && selfB.height   && selfB.height   < prefsA.height_min) score -= 0.3
-  if (prefsA.height_max && selfB.height   && selfB.height   > prefsA.height_max) score -= 0.3
+  // Age
+  if (prefsA.age_min && b.age && b.age < prefsA.age_min) score -= 0.4
+  if (prefsA.age_max && b.age && b.age > prefsA.age_max) score -= 0.4
+
+  // Height
+  if (prefsA.height_min && selfB.height && selfB.height < prefsA.height_min) score -= 0.3
+  if (prefsA.height_max && selfB.height && selfB.height > prefsA.height_max) score -= 0.3
+
+  // Weight
+  if (prefsA.weight_min && selfB.weight && selfB.weight < prefsA.weight_min) score -= 0.2
+  if (prefsA.weight_max && selfB.weight && selfB.weight > prefsA.weight_max) score -= 0.2
+
+  // Body type
+  if (prefsA.body_types?.length && selfB.body_type) {
+    if (!prefsA.body_types.includes(selfB.body_type)) score -= 0.3
+  }
 
   return Math.max(0, score)
 }
