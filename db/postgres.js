@@ -111,8 +111,8 @@ export const db = {
                OR (m.agent_b_id = $1 AND m.agent_a_id = a.id))
              AND m.created_at > COALESCE(
                (SELECT profile_updated_at FROM agents self WHERE self.id = $1),
-               '1970-01-01'::timestamptz)
-             AND m.created_at > COALESCE(a.profile_updated_at, '1970-01-01'::timestamptz)
+               NOW())
+             AND m.created_at > COALESCE(a.profile_updated_at, NOW())
          )
        LIMIT $2`,
       [agentId, limit]
