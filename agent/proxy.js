@@ -1,7 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { gemma as claude } from '../llm/gemma.js'
 import { db } from '../db/postgres.js'
 
-const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const MAX_TURNS = parseInt(process.env.DIALOGUE_MAX_TURNS || '8')
 
 // ─── Proxy modes ──────────────────────────────────────────────────────────────
@@ -49,7 +48,6 @@ ${JSON.stringify(dialogue.transcript?.slice(-6) || [], null, 2)}
 Верни ТОЛЬКО JSON.`
 
   const response = await claude.messages.create({
-    model: 'claude-haiku-4-5',
     max_tokens: 400,
     messages: [{ role: 'user', content: prompt }]
   })
@@ -83,7 +81,6 @@ ${JSON.stringify(dialogue.transcript?.slice(-6) || [], null, 2)}
 Если в конце ответа ощущается что пользователь хочет прямого контакта — добавь тег [INTENT_SIGNAL].`
 
   const response = await claude.messages.create({
-    model: 'claude-haiku-4-5',
     max_tokens: 300,
     messages: [{ role: 'user', content: prompt }]
   })

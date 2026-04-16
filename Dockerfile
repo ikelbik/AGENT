@@ -9,6 +9,7 @@ COPY index.js ./
 COPY bot/ ./bot/
 COPY queue/ ./queue/
 COPY agent/ ./agent/
+COPY llm/ ./llm/
 COPY db/ ./db/
 COPY server/ ./server/
 

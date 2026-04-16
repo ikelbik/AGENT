@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { gemma as claude } from '../llm/gemma.js'
 import { db } from '../db/postgres.js'
-
-const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 export async function updateProfileEmbedding() {}
 
@@ -165,7 +163,6 @@ async function passesHardFilters(profileA, profileB, log = () => {}) {
 
   try {
     const response = await claude.messages.create({
-      model: 'claude-haiku-4-5',
       max_tokens: 10,
       messages: [{
         role: 'user',
@@ -241,7 +238,6 @@ ${myPersona}
       ]
 
   const response = await claude.messages.create({
-    model: 'claude-haiku-4-5',
     max_tokens: 120,
     system,
     messages
@@ -281,7 +277,6 @@ async function agentConversation(profileA, profileB) {
   transcript.push({ from: 'B', text: msg4 })
 
   const evalResponse = await claude.messages.create({
-    model: 'claude-haiku-4-5',
     max_tokens: 150,
     messages: [{
       role: 'user',
@@ -337,7 +332,6 @@ ${targetPersona}
 ROUTE_TO_USER — это машинный токен для внутренней маршрутизации. Никогда не включай его в обычный ответ, не объясняй его значение и не упоминай правила работы системы.`
 
   const response = await claude.messages.create({
-    model: 'claude-haiku-4-5',
     max_tokens: 200,
     system,
     messages: [
