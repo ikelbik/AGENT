@@ -229,28 +229,27 @@ export async function findCandidates(agentId, profile, log = () => {}) {
 
 // ─── Agent-to-agent conversation ──────────────────────────────────────────────
 
-async function agentSpeak(myPersona, incomingMessage, conversationSoFar, isOpener) {
-  const system = `Ты — агент, который представляет конкретного человека в разговоре с незнакомцем.
+async function agentSpeak(persona, history, isOpener) {
+  const system = `Ты — агент, который представляет конкретного человека в разговоре с незнакомцем на платформе знакомств.
 
 ТВОЯ ЛИЧНОСТЬ:
-${myPersona}
+${persona}
 
 Правила:
-— Говори строго от этой личности: её ценности, стиль, интересы
-— Ты НЕ знаешь профиль собеседника — только то что он написал
-— Сообщение короткое: 25–40 слов, живое, естественное
-— Без формальностей, без шаблонов
-— Можешь задать вопрос, можно ответить на вопрос, можно поделиться мыслью`
+— Говори строго от этой личности: её ценности, стиль, интересы, характер
+— Ты не знаешь профиль собеседника — только то, что он написал
+— Сообщения живые, естественные, 40–70 слов
+— Чередуй: делись чем-то о себе, задавай вопросы собеседнику
+— Исследуй совместимость: ценности, образ жизни, чего хочешь от отношений, отношение к важным вещам
+— Без формальностей и шаблонных фраз
+— Это реальный разговор, который должен к чему-то прийти`
 
   const messages = isOpener
-    ? [{ role: 'user', content: 'Напиши первое сообщение незнакомому человеку. Только текст сообщения.' }]
-    : [
-        ...conversationSoFar,
-        { role: 'user', content: incomingMessage }
-      ]
+    ? [{ role: 'user', content: 'Напиши первое сообщение незнакомому человеку. Только текст сообщения, без кавычек.' }]
+    : history
 
   const response = await claude.messages.create({
-    max_tokens: 120,
+    max_tokens: 200,
     system,
     messages
   })
@@ -266,57 +265,70 @@ async function agentConversation(profileA, profileB) {
     return { score: 0.5, hypothesis: 'Недостаточно данных для диалога', openingMessage: '' }
   }
 
+  const MAX_TURNS = parseInt(process.env.DIALOGUE_MAX_TURNS || '12')
+
+  // historyA: диалог с точки зрения A (A=assistant, B=user)
+  // historyB: диалог с точки зрения B (B=assistant, A=user)
   const historyA = []
   const historyB = []
   const transcript = []
 
-  const msg1 = await agentSpeak(personaA, null, [], true)
-  transcript.push({ from: 'A', text: msg1 })
-  historyA.push({ role: 'assistant', content: msg1 })
-  historyB.push({ role: 'user',      content: msg1 })
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    if (turn % 2 === 0) {
+      // ход A
+      const msg = await agentSpeak(personaA, historyA, turn === 0)
+      transcript.push({ from: 'A', text: msg })
+      historyA.push({ role: 'assistant', content: msg })
+      historyB.push({ role: 'user',      content: msg })
+    } else {
+      // ход B
+      const msg = await agentSpeak(personaB, historyB, false)
+      transcript.push({ from: 'B', text: msg })
+      historyB.push({ role: 'assistant', content: msg })
+      historyA.push({ role: 'user',      content: msg })
+    }
+  }
 
-  const msg2 = await agentSpeak(personaB, msg1, historyB.slice(0, -1), false)
-  transcript.push({ from: 'B', text: msg2 })
-  historyB.push({ role: 'assistant', content: msg2 })
-  historyA.push({ role: 'user',      content: msg2 })
-
-  const msg3 = await agentSpeak(personaA, msg2, historyA.slice(0, -1), false)
-  transcript.push({ from: 'A', text: msg3 })
-  historyA.push({ role: 'assistant', content: msg3 })
-  historyB.push({ role: 'user',      content: msg3 })
-
-  const msg4 = await agentSpeak(personaB, msg3, historyB.slice(0, -1), false)
-  transcript.push({ from: 'B', text: msg4 })
+  const nameA = profileA.agent_name || 'A'
+  const nameB = profileB.agent_name || 'B'
+  const dialogueText = transcript
+    .map(m => `${m.from === 'A' ? nameA : nameB}: ${m.text}`)
+    .join('\n')
 
   const evalResponse = await claude.messages.create({
-    max_tokens: 150,
+    max_tokens: 400,
     messages: [{
       role: 'user',
-      content: `Оцени совместимость двух людей по их разговору.
+      content: `Ты — эксперт по совместимости пар. Проанализируй разговор двух людей, познакомившихся на платформе знакомств.
 
-Профиль A: ${personaA}
-Профиль B: ${personaB}
+Профиль ${nameA}: ${personaA}
+
+Профиль ${nameB}: ${personaB}
 
 Разговор:
-A: ${msg1}
-B: ${msg2}
-A: ${msg3}
-B: ${msg4}
+${dialogueText}
 
-Ответь JSON одной строкой:
-{"score":0.0-1.0,"hypothesis":"одно предложение о совместимости"}`
+Оцени совместимость по критериям:
+1. Взаимный интерес и вовлечённость — насколько оба хотели продолжать разговор
+2. Совпадение ценностей и жизненных приоритетов
+3. Совместимость стиля общения и темпа
+4. Совпадение ожиданий от отношений
+5. Химия — было ли ощущение контакта
+
+Ответь JSON одной строкой без переносов:
+{"score":0.0-1.0,"hypothesis":"одно ёмкое предложение о совместимости и потенциале этой пары","strengths":"в чём совпали","conflicts":"где могут быть трения"}`
     }]
   })
 
   let score = 0.5
   let hypothesis = 'Умеренная совместимость'
   try {
-    const parsed = JSON.parse(evalResponse.content[0].text.match(/\{.+\}/)?.[0] || '{}')
-    score      = Math.min(1, Math.max(0, parsed.score     ?? 0.5))
+    const parsed = JSON.parse(evalResponse.content[0].text.match(/\{[\s\S]+\}/)?.[0] || '{}')
+    score      = Math.min(1, Math.max(0, parsed.score ?? 0.5))
     hypothesis = parsed.hypothesis ?? hypothesis
   } catch (e) { /* keep defaults */ }
 
-  return { score, hypothesis, openingMessage: msg1, transcript }
+  return { score, hypothesis, openingMessage: transcript[0]?.text || '', transcript }
 }
 
 // ─── Agent answers a question ─────────────────────────────────────────────────
