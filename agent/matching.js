@@ -249,7 +249,7 @@ ${persona}
     : history
 
   const response = await claude.messages.create({
-    max_tokens: 200,
+    max_tokens: 400,
     system,
     messages
   })
